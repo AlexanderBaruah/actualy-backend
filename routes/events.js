@@ -134,4 +134,54 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/events/range
+ * Get events for a date range (for history view)
+ * Query params: days (default 30) - number of days to fetch
+ */
+router.get('/range', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+
+    // Get date range
+    const endDate = new Date();
+    endDate.setUTCHours(23, 59, 59, 999);
+
+    const startDate = new Date();
+    startDate.setUTCDate(startDate.getUTCDate() - days);
+    startDate.setUTCHours(0, 0, 0, 0);
+
+    // Fetch events
+    const { data: events, error: eventsError } = await req.supabase
+      .from('events')
+      .select('*')
+      .gte('start_time', startDate.toISOString())
+      .lte('start_time', endDate.toISOString())
+      .order('start_time', { ascending: false });
+
+    if (eventsError) {
+      console.error('Error fetching events:', eventsError);
+      return res.status(500).json({ error: 'Failed to fetch events' });
+    }
+
+    // Fetch sessions for the same period
+    const { data: sessions, error: sessionsError } = await req.supabase
+      .from('sessions')
+      .select('*')
+      .gte('actual_start_time', startDate.toISOString())
+      .lte('actual_start_time', endDate.toISOString())
+      .order('actual_start_time', { ascending: false });
+
+    if (sessionsError) {
+      console.error('Error fetching sessions:', sessionsError);
+      return res.status(500).json({ error: 'Failed to fetch sessions' });
+    }
+
+    res.json({ events, sessions });
+  } catch (error) {
+    console.error('Error in GET /events/range:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

@@ -213,6 +213,8 @@ const S = {
   openMenu: null, // id of event whose menu is open
   notesFor: null, // id of event being noted
   sessionIds: {}, // event id -> backend session id
+  historyData: null, // {events: [], sessions: []}
+  expandedDay: null, // date string for expanded day
 };
 
 /* ── AUTH & API ────────────────────────────────── */
@@ -456,6 +458,120 @@ function rTrack() {
     }).join('')}`;
 }
 
+/* ── HISTORY VIEW ─────────────────────────────── */
+function rHistory() {
+  if (!S.historyData) {
+    return `<div style="text-align:center;margin-top:60px;color:#666">
+      <div style="font-size:16px">Loading history...</div>
+    </div>`;
+  }
+
+  // Group events and sessions by date
+  const dayMap = {};
+
+  S.historyData.events.forEach(e => {
+    const dateKey = new Date(e.start_time).toISOString().split('T')[0];
+    if (!dayMap[dateKey]) dayMap[dateKey] = { events: [], sessions: [] };
+    dayMap[dateKey].events.push(e);
+  });
+
+  S.historyData.sessions.forEach(s => {
+    const dateKey = new Date(s.actual_start_time).toISOString().split('T')[0];
+    if (!dayMap[dateKey]) dayMap[dateKey] = { events: [], sessions: [] };
+    dayMap[dateKey].sessions.push(s);
+  });
+
+  // Sort days descending (most recent first)
+  const sortedDays = Object.keys(dayMap).sort((a, b) => b.localeCompare(a));
+
+  if (sortedDays.length === 0) {
+    return `<div style="text-align:center;margin-top:60px;color:#666">
+      <div style="font-size:16px">No history yet</div>
+      <div style="font-size:14px;margin-top:8px">Start tracking events to build your history</div>
+    </div>`;
+  }
+
+  return `<div style="display:flex;flex-direction:column;gap:10px">${sortedDays.map(dateKey => {
+    const dayData = dayMap[dateKey];
+    const d = new Date(dateKey + 'T12:00:00');
+    const isToday = dateKey === new Date().toISOString().split('T')[0];
+    const dayLabel = isToday ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+    // Calculate totals
+    const totalPlanned = dayData.events.reduce((sum, e) => {
+      const start = new Date(e.start_time);
+      const end = new Date(e.end_time);
+      return sum + Math.floor((end - start) / 60000);
+    }, 0);
+
+    const totalTracked = dayData.sessions.reduce((sum, s) => sum + Math.floor(s.duration_seconds / 60), 0);
+    const compliance = totalPlanned > 0 ? Math.round((totalTracked / totalPlanned) * 100) : 0;
+    const complianceColor = compliance === 0 ? '#666' : compliance < 50 ? '#f59e0b' : compliance < 80 ? '#0f9d8b' : '#10b981';
+
+    const expanded = S.expandedDay === dateKey;
+
+    return `<div class="scard" style="cursor:pointer;transition:all .2s" onclick="toggleDay('${dateKey}')">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:15px;font-weight:600;margin-bottom:4px">${dayLabel}</div>
+          <div style="font-size:12px;color:#666">${dayData.events.length} events • ${dayData.sessions.length} sessions</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px">
+          <div style="text-align:right">
+            <div style="font-size:13px;color:${complianceColor};font-weight:600">${compliance}%</div>
+            <div style="font-size:11px;color:#666">compliance</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:13px;color:#fff;font-weight:500">${fdur(totalPlanned)}</div>
+            <div style="font-size:11px;color:#666">planned</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:13px;color:#0f9d8b;font-weight:500">${fdur(totalTracked)}</div>
+            <div style="font-size:11px;color:#666">tracked</div>
+          </div>
+          <span style="font-size:18px;color:#666">${expanded ? '▼' : '▶'}</span>
+        </div>
+      </div>
+      ${expanded ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid #2a2a2a">
+        ${dayData.events.length > 0 ? `<div style="margin-bottom:14px">
+          <div style="font-size:12px;color:#666;margin-bottom:8px;font-weight:600">PLANNED EVENTS</div>
+          ${dayData.events.map(e => {
+            const start = new Date(e.start_time);
+            const end = new Date(e.end_time);
+            const duration = Math.floor((end - start) / 60000);
+            const colorIdx = COLORS.findIndex(c => c.bdr === e.color);
+            const color = colorIdx >= 0 ? COLORS[colorIdx] : COLORS[0];
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:${color.fill};border-left:3px solid ${color.bdr};border-radius:6px;margin-bottom:6px">
+              <span style="font-size:13px;font-weight:500">${esc(e.name)}</span>
+              <span style="font-size:12px;color:#999">${start.toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'})} - ${end.toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'})} (${fdur(duration)})</span>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
+        ${dayData.sessions.length > 0 ? `<div>
+          <div style="font-size:12px;color:#0f9d8b;margin-bottom:8px;font-weight:600">TRACKED SESSIONS</div>
+          ${dayData.sessions.map(s => {
+            const start = new Date(s.actual_start_time);
+            const duration = Math.floor(s.duration_seconds / 60);
+            const event = s.event_id ? dayData.events.find(e => e.id === s.event_id) : null;
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#1a1a1a;border-left:3px solid #0f9d8b;border-radius:6px;margin-bottom:6px">
+              <div>
+                <span style="font-size:13px;font-weight:500">${event ? esc(event.name) : '[Untracked]'}</span>
+                ${s.notes ? `<div style="font-size:11px;color:#666;margin-top:2px;font-style:italic">📝 ${esc(s.notes)}</div>` : ''}
+              </div>
+              <span style="font-size:12px;color:#999">${start.toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'})} • ${fdur(duration)}</span>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
+      </div>` : ''}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+window.toggleDay = function(dateKey) {
+  S.expandedDay = S.expandedDay === dateKey ? null : dateKey;
+  render();
+};
+
 /* ── STATS VIEW ───────────────────────────────── */
 function rStats() {
   const tp = EVS.reduce((s, e) => s + dur(e), 0);
@@ -526,15 +642,31 @@ function render() {
       </div>
     </div>
     <div class="tabs">
-      ${['today','track','stats'].map(t =>
+      ${['today','track','history','stats'].map(t =>
         `<button class="tab ${S.tab===t?'on':''}" onclick="sw('${t}')">${t}</button>`
       ).join('')}
     </div>
-    <div>${S.tab==='today' ? rToday() : S.tab==='track' ? rTrack() : rStats()}</div>`;
+    <div>${S.tab==='today' ? rToday() : S.tab==='track' ? rTrack() : S.tab==='history' ? rHistory() : rStats()}</div>`;
 }
 
 /* ── TAB & TIMER ──────────────────────────────── */
-window.sw = t => { S.tab = t; S.openMenu = null; render(); };
+window.sw = async t => {
+  S.tab = t;
+  S.openMenu = null;
+  if (t === 'history' && !S.historyData) {
+    await loadHistoryData();
+  }
+  render();
+};
+
+async function loadHistoryData() {
+  try {
+    const data = await apiCall('GET', '/api/events/range?days=30');
+    S.historyData = data;
+  } catch (error) {
+    console.error('Failed to load history:', error);
+  }
+}
 
 window.tog = async id => {
   S.openMenu = null;
