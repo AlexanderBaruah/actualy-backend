@@ -15,6 +15,15 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Root route for debugging
+app.get('/api', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Actualy API is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Serve static files from 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
 
