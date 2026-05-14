@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Actualy</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #111; color: #fff; font-family: 'Outfit', system-ui, sans-serif; min-height: 100vh; }
+  #app { max-width: 780px; margin: 0 auto; padding: 28px 24px; }
+
+  .logo { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
+  .ghost-btn { background: transparent; border: 1px solid #333; border-radius: 20px; color: #aaa; padding: 6px 14px; cursor: pointer; font-size: 13px; font-family: inherit; display: inline-flex; align-items: center; gap: 5px; }
+  .ghost-btn:hover { background: #1e1e1e; color: #fff; }
+  .icon-btn { background: transparent; border: 1px solid #333; border-radius: 8px; color: #aaa; padding: 6px 10px; cursor: pointer; font-family: inherit; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid #222; margin-bottom: 24px; }
+  .tab { background: transparent; border: 1px solid transparent; border-radius: 20px; color: #666; padding: 6px 18px; cursor: pointer; font-size: 14px; font-family: inherit; transition: all .15s; }
+  .tab.on { background: #fff; color: #111; }
+  .tab:not(.on):hover { color: #ddd; border-color: #444; }
+
+  /* Event cards */
+  .ecard { background: #1a1a1a; border-radius: 12px; padding: 16px 18px; display: flex; align-items: center; gap: 12px; border: 1px solid #1a1a1a; transition: border-color .2s; margin-bottom: 10px; }
+  .ecard.running { border-color: #0f9d8b; }
+  .start-btn { background: #222; border: 1px solid #333; border-radius: 10px; color: #fff; padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 500; font-family: inherit; min-width: 76px; transition: background .15s; white-space: nowrap; flex-shrink: 0; }
+  .start-btn:hover { background: #2e2e2e; }
+  .stop-btn  { background: #ef4444; border: none; border-radius: 10px; color: #fff; padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 500; font-family: inherit; min-width: 76px; transition: background .15s; white-space: nowrap; flex-shrink: 0; }
+  .stop-btn:hover { background: #dc2626; }
+
+  /* Triple dot button */
+  .dot-btn { background: transparent; border: 1px solid #2a2a2a; border-radius: 8px; color: #555; padding: 9px 10px; cursor: pointer; font-size: 15px; line-height: 1; font-family: inherit; flex-shrink: 0; transition: all .15s; }
+  .dot-btn:hover { background: #222; color: #ccc; border-color: #444; }
+
+  /* Dropdown */
+  .dot-wrap { position: relative; flex-shrink: 0; }
+  .dropdown { position: absolute; right: 0; top: calc(100% + 6px); background: #222; border: 1px solid #333; border-radius: 12px; padding: 5px; min-width: 168px; z-index: 50; animation: fadeIn .15s ease; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+  .drop-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; color: #ccc; transition: background .1s; width: 100%; border: none; background: none; font-family: inherit; text-align: left; white-space: nowrap; }
+  .drop-item:hover { background: #2e2e2e; color: #fff; }
+  .drop-item.danger { color: #f87171; }
+  .drop-item.danger:hover { background: #2a1515; color: #ef4444; }
+  .drop-divider { height: 1px; background: #2e2e2e; margin: 4px 0; }
+
+  /* Stats */
+  .scard { background: #1a1a1a; border-radius: 12px; padding: 16px 18px; border: 1px solid #1f1f1f; }
+
+  /* Calendar */
+  .cal-wrap { display: grid; grid-template-columns: 48px 1fr; }
+  .col-hdr { display: grid; grid-template-columns: 1fr 1fr; }
+  .col-planned { text-align: center; font-size: 11px; font-weight: 600; color: #666; letter-spacing: 1px; padding-bottom: 8px; border-bottom: 1px solid #222; }
+  .col-actual   { text-align: center; font-size: 11px; font-weight: 600; color: #0f9d8b; letter-spacing: 1px; padding-bottom: 8px; border-bottom: 2px solid #0f9d8b; }
+
+  /* Shared modal styles */
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.78); z-index: 100; align-items: center; justify-content: center; padding: 20px; }
+  .overlay.open { display: flex; }
+  .modal-box { background: #1c1c1c; border-radius: 16px; padding: 28px; width: 100%; max-width: 400px; border: 1px solid #2a2a2a; animation: slideUp .2s ease; }
+  @keyframes slideUp { from { transform:translateY(16px); opacity:0; } to { transform:translateY(0); opacity:1; } }
+  .mlabel { font-size: 13px; color: #666; display: block; margin-bottom: 6px; }
+  .minput { width: 100%; background: #111; border: 1px solid #2e2e2e; border-radius: 8px; color: #fff; padding: 10px 14px; font-size: 14px; font-family: inherit; outline: none; transition: border-color .15s; color-scheme: dark; }
+  .minput:focus { border-color: #555; }
+  .mtextarea { width: 100%; background: #111; border: 1px solid #2e2e2e; border-radius: 8px; color: #fff; padding: 12px 14px; font-size: 14px; font-family: inherit; outline: none; transition: border-color .15s; resize: vertical; min-height: 110px; color-scheme: dark; line-height: 1.5; }
+  .mtextarea:focus { border-color: #555; }
+  .mtextarea::placeholder { color: #444; }
+  .swatch { width: 26px; height: 26px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: transform .15s, border-color .15s; flex-shrink: 0; }
+  .swatch.picked { border-color: #fff; transform: scale(1.18); }
+  .merr { font-size: 12px; color: #ef4444; margin-top: 4px; min-height: 16px; }
+  .mbtn-cancel { flex: 1; background: transparent; border: 1px solid #333; border-radius: 10px; color: #aaa; padding: 11px; cursor: pointer; font-size: 14px; font-family: inherit; transition: background .15s; }
+  .mbtn-cancel:hover { background: #222; color: #fff; }
+  .mbtn-save { flex: 1; background: #fff; border: none; border-radius: 10px; color: #111; padding: 11px; cursor: pointer; font-size: 14px; font-weight: 600; font-family: inherit; transition: background .15s; }
+  .mbtn-save:hover { background: #e5e5e5; }
+  .mbtn-del { background: transparent; border: 1px solid #3a1515; border-radius: 10px; color: #f87171; padding: 11px 16px; cursor: pointer; font-size: 14px; font-family: inherit; transition: background .15s; }
+  .mbtn-del:hover { background: #2a1515; }
+
+  /* Auth screen */
+  .auth-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; flex-direction: column; gap: 24px; }
+  .auth-box { background: #1c1c1c; border-radius: 16px; padding: 40px; border: 1px solid #2a2a2a; text-align: center; max-width: 400px; width: 100%; }
+  .auth-btn { background: #fff; border: none; border-radius: 10px; color: #111; padding: 12px 24px; cursor: pointer; font-size: 15px; font-weight: 600; font-family: inherit; transition: background .15s; display: inline-flex; align-items: center; gap: 10px; }
+  .auth-btn:hover { background: #e5e5e5; }
+</style>
+</head>
+<body>
+
+<div id="auth-screen" class="auth-screen" style="display:flex">
+  <div class="auth-box">
+    <div class="logo" style="margin-bottom:12px">Actualy</div>
+    <p style="font-size:14px;color:#666;margin-bottom:28px">Time tracking that compares plans vs. reality</p>
+    <button id="google-signin-btn" class="auth-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285f4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34a853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fbbc05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#ea4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Sign in with Google
+    </button>
+  </div>
+</div>
+
+<div id="app" style="display:none"></div>
+
+<!-- ADD EVENT MODAL -->
+<div id="modal" class="overlay">
+  <div class="modal-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:22px">
+      <span style="font-size:17px;font-weight:600">Add event</span>
+      <button onclick="closeModal()" style="background:none;border:none;color:#666;cursor:pointer;font-size:26px;line-height:1;padding:0 4px">×</button>
+    </div>
+    <label class="mlabel">Event name</label>
+    <input id="evt-name" class="minput" type="text" placeholder="e.g. Focus time"
+      style="margin-bottom:4px" oninput="document.getElementById('evt-err').textContent=''">
+    <div id="evt-err" class="merr"></div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px;margin-top:10px">
+      <div>
+        <label class="mlabel">Start time</label>
+        <input id="evt-start" class="minput" type="time" value="09:00">
+      </div>
+      <div>
+        <label class="mlabel">End time</label>
+        <input id="evt-end" class="minput" type="time" value="10:00">
+      </div>
+    </div>
+    <label class="mlabel" style="margin-bottom:10px">Color</label>
+    <div id="color-swatches" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:28px"></div>
+    <div style="display:flex;gap:10px">
+      <button class="mbtn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="mbtn-save" onclick="addEvent()">Add event</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT EVENT MODAL -->
+<div id="edit-modal" class="overlay">
+  <div class="modal-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:22px">
+      <span style="font-size:17px;font-weight:600">Edit event</span>
+      <button onclick="closeEditModal()" style="background:none;border:none;color:#666;cursor:pointer;font-size:26px;line-height:1;padding:0 4px">×</button>
+    </div>
+    <label class="mlabel">Event name</label>
+    <input id="edit-evt-name" class="minput" type="text" placeholder="e.g. Focus time"
+      style="margin-bottom:4px" oninput="document.getElementById('edit-evt-err').textContent=''">
+    <div id="edit-evt-err" class="merr"></div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px;margin-top:10px">
+      <div>
+        <label class="mlabel">Start time</label>
+        <input id="edit-evt-start" class="minput" type="time" value="09:00">
+      </div>
+      <div>
+        <label class="mlabel">End time</label>
+        <input id="edit-evt-end" class="minput" type="time" value="10:00">
+      </div>
+    </div>
+    <label class="mlabel" style="margin-bottom:10px">Color</label>
+    <div id="edit-color-swatches" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:28px"></div>
+    <div style="display:flex;gap:10px">
+      <button class="mbtn-cancel" onclick="closeEditModal()">Cancel</button>
+      <button class="mbtn-save" onclick="saveEditEvent()">Save changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- NOTES MODAL -->
+<div id="notes-modal" class="overlay">
+  <div class="modal-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:17px;font-weight:600">Notes</span>
+      <button onclick="closeNotes()" style="background:none;border:none;color:#666;cursor:pointer;font-size:26px;line-height:1;padding:0 4px">×</button>
+    </div>
+    <div id="notes-evt-name" style="font-size:13px;color:#555;margin-bottom:18px"></div>
+    <label class="mlabel">How did it go?</label>
+    <textarea id="notes-text" class="mtextarea" placeholder="Jot down what happened, what you accomplished, or how you felt…"></textarea>
+    <div style="display:flex;gap:10px;margin-top:18px">
+      <button class="mbtn-del" onclick="clearNote()" id="notes-clear-btn">Clear</button>
+      <div style="flex:1;display:flex;gap:10px">
+        <button class="mbtn-cancel" onclick="closeNotes()">Cancel</button>
+        <button class="mbtn-save" onclick="saveNote()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Initialize Supabase
+const SUPABASE_URL = 'https://kodxtnmprtlbsafxizrw.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_07V1Pb-IXSLY9VSYQWs3VQ_It76Cvny';
+const API_BASE = 'http://localhost:3000';
+const { createClient } = supabase;
+const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let userSession = null;
+let userToken = null;
+
+const COLORS = [
+  { fill:'#fef3c7', bdr:'#f59e0b', bar:'#fcd34d' },
+  { fill:'#dbeafe', bdr:'#3b82f6', bar:'#93c5fd' },
+  { fill:'#dcfce7', bdr:'#22c55e', bar:'#86efac' },
+  { fill:'#ede9fe', bdr:'#8b5cf6', bar:'#c4b5fd' },
+  { fill:'#fce7f3', bdr:'#ec4899', bar:'#f9a8d4' },
+  { fill:'#ffedd5', bdr:'#f97316', bar:'#fdba74' },
+  { fill:'#e0f2fe', bdr:'#0ea5e9', bar:'#7dd3fc' },
+  { fill:'#fdf4ff', bdr:'#d946ef', bar:'#f0abfc' },
+];
+
+let EVS = [];
+let pickedColor = 0;
+let editingEventId = null;
+let editPickedColor = 0;
+const HH = 72, CS = 7;
+const HOURS = Array.from({ length: 12 }, (_, i) => i + CS);
+const S = {
+  tab: 'today',
+  sess: {},
+  active: null,
+  elapsed: 0,
+  now: new Date(),
+  notes: {},      // id -> string
+  openMenu: null, // id of event whose menu is open
+  notesFor: null, // id of event being noted
+  sessionIds: {}, // event id -> backend session id
+};
+
+/* ── AUTH & API ────────────────────────────────── */
+async function initAuth() {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (session) {
+    userSession = session;
+    userToken = session.access_token;
+    document.getElementById('auth-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    await loadTodaysEvents();
+    render();
+  } else {
+    document.getElementById('auth-screen').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+  }
+}
+
+document.getElementById('google-signin-btn').addEventListener('click', async () => {
+  await supabaseClient.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin }
+  });
+});
+
+supabaseClient.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_IN' && session) {
+    userSession = session;
+    userToken = session.access_token;
+    document.getElementById('auth-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    loadTodaysEvents().then(() => render());
+  } else if (event === 'SIGNED_OUT') {
+    userSession = null;
+    userToken = null;
+    EVS = [];
+    S.sess = {};
+    S.active = null;
+    S.notes = {};
+    S.sessionIds = {};
+    document.getElementById('auth-screen').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+  }
+});
+
+window.logout = async function() {
+  await supabaseClient.auth.signOut();
+};
+
+async function apiCall(method, path, body = null) {
+  if (!userToken) {
+    console.error('No auth token available');
+    throw new Error('Not authenticated');
+  }
+
+  const options = {
+    method,
+    headers: {
+      'Authorization': `Bearer ${userToken}`,
+      'Content-Type': 'application/json'
+    }
+  };
+  if (body) options.body = JSON.stringify(body);
+
+  console.log(`API Call: ${method} ${path}`, body ? body : '');
+
+  const res = await fetch(`${API_BASE}${path}`, options);
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error(`API error ${res.status}:`, errorText);
+    throw new Error(`API error: ${res.status}`);
+  }
+  return await res.json();
+}
+
+async function loadTodaysEvents() {
+  try {
+    const data = await apiCall('GET', '/api/events/today');
+    EVS = data.events.map(e => {
+      const start = new Date(e.start_time);
+      const end = new Date(e.end_time);
+      const colorIdx = COLORS.findIndex(c => c.bdr === e.color) || 0;
+      return {
+        id: e.id,
+        n: e.name,
+        sh: start.getHours(),
+        sm: start.getMinutes(),
+        eh: end.getHours(),
+        em: end.getMinutes(),
+        fill: COLORS[colorIdx].fill,
+        bdr: e.color,
+        bar: COLORS[colorIdx].bar
+      };
+    });
+  } catch (err) {
+    console.error('Failed to load events:', err);
+    EVS = [];
+  }
+}
+
+/* ── HELPERS ──────────────────────────────────── */
+function toM(h, m) { return h * 60 + m; }
+function dur(e) { return toM(e.eh, e.em) - toM(e.sh, e.sm); }
+function f12(h, m) {
+  const ap = h >= 12 ? 'PM' : 'AM';
+  const hh = h > 12 ? h - 12 : h === 0 ? 12 : h;
+  return `${hh}:${String(m).padStart(2,'0')} ${ap}`;
+}
+function fhr(h) { if (h === 12) return '12p'; return h > 12 ? `${h-12}p` : `${h}a`; }
+function fdur(m) {
+  if (m <= 0) return '0m';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+function ftimer(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return (h ? `${h}:` : '') + `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+function tracked(id) { return (S.sess[id]?.secs || 0) + (S.active?.id === id ? S.elapsed : 0); }
+function actualStartMs(id) {
+  if (S.active?.id === id) return S.active.startMs;
+  return S.sess[id]?.startMs || null;
+}
+function dayLbl() { return S.now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); }
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+/* ── TODAY VIEW ───────────────────────────────── */
+function rToday() {
+  const nowM = S.now.getHours() * 60 + S.now.getMinutes();
+  const lt = ((nowM - CS * 60) / 60) * HH;
+  const totH = HOURS.length * HH;
+  const hasA = EVS.some(e => tracked(e.id) >= 1);
+
+  const pEvts = EVS.map(e => {
+    const top = ((toM(e.sh, e.sm) - CS * 60) / 60) * HH;
+    const h = (dur(e) / 60) * HH;
+    return `<div style="position:absolute;top:${top}px;left:4px;right:4px;height:${Math.max(h-2,14)}px;
+        background:${e.fill};border-left:3px solid ${e.bdr};border-radius:6px;padding:5px 8px;overflow:hidden">
+      <div style="font-size:13px;font-weight:600;color:#1a1a1a">${esc(e.n)}</div>
+      <div style="font-size:11px;color:#555">${f12(e.sh,e.sm)}</div>
+    </div>`;
+  }).join('');
+
+  const aEvts = EVS.map(e => {
+    const secs = tracked(e.id);
+    const startMs = actualStartMs(e.id);
+    if (secs < 1 || !startMs) return '';
+    const actualStart = new Date(startMs);
+    const actualMin = actualStart.getHours() * 60 + actualStart.getMinutes();
+    const top = Math.max(0, ((actualMin - CS * 60) / 60) * HH);
+    const h = Math.max((secs / 3600) * HH, 20);
+    return `<div style="position:absolute;top:${top}px;left:4px;right:4px;height:${h}px;
+        background:${e.fill};border-left:3px solid #0f9d8b;border-radius:6px;padding:5px 8px;overflow:hidden">
+      <div style="font-size:11px;font-weight:600;color:#1a1a1a">${esc(e.n)}</div>
+      <div style="font-size:11px;color:#555;margin-top:1px" id="actual-dur-${e.id}">${fdur(Math.floor(secs/60))}</div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+      <button class="ghost-btn" onclick="openModal()">+ Add event</button>
+    </div>
+    <div class="cal-wrap">
+      <div></div>
+      <div class="col-hdr">
+        <div class="col-planned">PLANNED</div>
+        <div class="col-actual">ACTUAL</div>
+      </div>
+      <div>
+        ${HOURS.map(h => `<div style="height:${HH}px;font-size:11px;color:#555;text-align:right;
+          padding-right:8px;padding-top:4px;border-bottom:1px solid #1c1c1c">${fhr(h)}</div>`).join('')}
+      </div>
+      <div style="position:relative">
+        ${HOURS.map(() => `<div style="height:${HH}px;border-bottom:1px solid #1c1c1c;
+          display:grid;grid-template-columns:1fr 1fr">
+          <div style="border-left:1px solid #1c1c1c;border-right:1px solid #1c1c1c"></div>
+          <div></div>
+        </div>`).join('')}
+        <div style="position:absolute;top:0;bottom:0;left:0;right:50%;pointer-events:none">
+          <div style="position:relative;height:${totH}px">${pEvts}</div>
+        </div>
+        <div style="position:absolute;top:0;bottom:0;left:50%;right:0;pointer-events:none">
+          ${!hasA ? `<div style="position:absolute;top:${HH}px;left:0;right:0;text-align:center;
+            font-size:13px;color:#444;padding-top:16px">Events you track appear here</div>` : ''}
+          <div style="position:relative;height:${totH}px">${aEvts}</div>
+        </div>
+        ${lt > 0 && lt < totH ? `
+          <div style="position:absolute;top:${lt}px;left:0;right:0;height:2px;background:#ef4444;z-index:5;display:flex;align-items:center">
+            <div style="width:8px;height:8px;border-radius:50%;background:#ef4444;margin-left:-4px;flex-shrink:0"></div>
+          </div>` : ''}
+      </div>
+    </div>`;
+}
+
+/* ── TRACK VIEW ───────────────────────────────── */
+function rTrack() {
+  return `
+    <p style="font-size:14px;color:#555;margin-bottom:18px">Tap an event to begin tracking</p>
+    ${EVS.map(e => {
+      const isA  = S.active?.id === e.id;
+      const secs = tracked(e.id);
+      const note = S.notes[e.id] || '';
+      const menuOpen = S.openMenu === e.id;
+
+      return `<div class="ecard ${isA ? 'running' : ''}">
+        <div style="width:3px;height:48px;background:${e.bdr};border-radius:2px;flex-shrink:0"></div>
+
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:15px">${esc(e.n)}</div>
+          <div style="font-size:13px;color:#555;margin-top:2px">${f12(e.sh,e.sm)} – ${f12(e.eh,e.em)} · ${fdur(dur(e))}</div>
+          ${isA ? `<div id="tmr-${e.id}" style="font-size:13px;color:#0f9d8b;margin-top:3px;font-weight:500">⏱ ${ftimer(S.elapsed)}</div>` : ''}
+          ${!isA && secs > 0 ? `<div style="font-size:12px;color:#555;margin-top:2px">${fdur(Math.floor(secs/60))} tracked</div>` : ''}
+          ${note ? `<div style="font-size:12px;color:#666;margin-top:4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px">📝 ${esc(note)}</div>` : ''}
+        </div>
+
+        <button class="${isA ? 'stop-btn' : 'start-btn'}" onclick="tog('${e.id}')">
+          ${isA ? '⏹ Stop' : '▶ Start'}
+        </button>
+
+        <div class="dot-wrap">
+          <button class="dot-btn" onclick="toggleMenu(event,'${e.id}')">⋮</button>
+          ${menuOpen ? `
+          <div class="dropdown">
+            <button class="drop-item" onclick="openEditModal('${e.id}')">
+              <span style="font-size:16px">✏️</span>
+              Edit event
+            </button>
+            <button class="drop-item" onclick="openNotes('${e.id}')">
+              <span style="font-size:16px">${note ? '📝' : '📝'}</span>
+              ${note ? 'Edit note' : 'Add note'}
+            </button>
+            <div class="drop-divider"></div>
+            <button class="drop-item danger" onclick="removeEvent('${e.id}')">
+              <span style="font-size:16px">🗑</span>
+              Remove event
+            </button>
+          </div>` : ''}
+        </div>
+      </div>`;
+    }).join('')}`;
+}
+
+/* ── STATS VIEW ───────────────────────────────── */
+function rStats() {
+  const tp = EVS.reduce((s, e) => s + dur(e), 0);
+  const tt = EVS.reduce((s, e) => s + Math.floor(tracked(e.id) / 60), 0);
+  const comp = tp > 0 ? Math.round((tt / tp) * 100) : 0;
+  const cc = comp === 0 ? '#ef4444' : comp < 50 ? '#f59e0b' : '#0f9d8b';
+  return `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:26px">
+      <div class="scard"><div style="font-size:13px;color:#666;margin-bottom:6px">Compliance</div>
+        <div style="font-size:30px;font-weight:700;color:${cc}">${comp}%</div></div>
+      <div class="scard"><div style="font-size:13px;color:#666;margin-bottom:6px">Planned</div>
+        <div style="font-size:22px;font-weight:700">${fdur(tp)}</div></div>
+      <div class="scard"><div style="font-size:13px;color:#666;margin-bottom:6px">Tracked</div>
+        <div style="font-size:22px;font-weight:700;color:#0f9d8b">${fdur(tt)}</div></div>
+    </div>
+    <div style="display:flex;gap:20px;margin-bottom:22px">
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:10px;height:10px;border-radius:2px;background:#f59e0b"></div><span style="font-size:13px;color:#666">Planned</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:10px;height:10px;border-radius:2px;background:#0f9d8b"></div><span style="font-size:13px;color:#666">Actual</span></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:22px">
+      ${EVS.map(e => {
+        const secs = tracked(e.id), tm = Math.floor(secs/60), d = dur(e);
+        const pct = Math.min(100, Math.round((tm / d) * 100));
+        const note = S.notes[e.id];
+        return `<div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:7px">
+            <span style="font-weight:600;font-size:15px">${esc(e.n)}</span>
+            <span style="font-size:13px;color:#555"><span style="color:#0f9d8b">${fdur(tm)}</span> / ${fdur(d)}</span>
+          </div>
+          <div style="height:22px;border-radius:6px;overflow:hidden;background:${e.bar};position:relative">
+            <div style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:#0f9d8b;border-radius:6px;transition:width .4s ease"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:5px">
+            <span style="font-size:12px;color:#555">${pct}% done</span>
+            <span style="font-size:12px;color:#555">${secs > 0 ? '1 session' : '0 sessions'}</span>
+          </div>
+          ${note ? `<div style="font-size:12px;color:#555;margin-top:6px;font-style:italic;padding:8px 10px;background:#1a1a1a;border-radius:6px;border-left:2px solid #333">📝 ${esc(note)}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>
+    ${tt === 0 ? `<div style="text-align:center;margin-top:36px;color:#444">
+      <div style="font-size:14px">No sessions logged yet</div>
+      <div style="font-size:13px;margin-top:4px">Go to Track to start recording your day.</div>
+    </div>` : ''}`;
+}
+
+/* ── MAIN RENDER ──────────────────────────────── */
+function render() {
+  const userEmail = userSession?.user?.email || '';
+  const userAvatar = userSession?.user?.user_metadata?.avatar_url || '';
+  const userName = userSession?.user?.user_metadata?.full_name || userEmail.split('@')[0];
+
+  document.getElementById('app').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <div style="display:flex;align-items:baseline;gap:10px">
+        <span class="logo">Actualy</span>
+        <span style="font-size:13px;color:#555">${dayLbl()}</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button onclick="downloadData()" class="ghost-btn" style="font-size:12px">
+          <span>📊</span> Export
+        </button>
+        ${userAvatar ? `<img src="${userAvatar}" style="width:32px;height:32px;border-radius:50%;border:2px solid #333" alt="Profile">` : ''}
+        <div style="display:flex;flex-direction:column;align-items:flex-end">
+          <span style="font-size:13px;color:#ccc">${esc(userName)}</span>
+          <button onclick="logout()" style="background:none;border:none;color:#666;cursor:pointer;font-size:11px;padding:0;font-family:inherit;text-decoration:underline">Sign out</button>
+        </div>
+      </div>
+    </div>
+    <div class="tabs">
+      ${['today','track','stats'].map(t =>
+        `<button class="tab ${S.tab===t?'on':''}" onclick="sw('${t}')">${t}</button>`
+      ).join('')}
+    </div>
+    <div>${S.tab==='today' ? rToday() : S.tab==='track' ? rTrack() : rStats()}</div>`;
+}
+
+/* ── TAB & TIMER ──────────────────────────────── */
+window.sw = t => { S.tab = t; S.openMenu = null; render(); };
+
+window.tog = async id => {
+  S.openMenu = null;
+  if (S.active?.id === id) {
+    // Stopping timer - save session to backend
+    const secs = Math.floor((Date.now() - S.active.startMs) / 1000);
+    const prev = S.sess[id]?.secs || 0;
+    const firstStart = S.sess[id]?.startMs || S.active.startMs;
+    S.sess[id] = { secs: prev + secs, startMs: firstStart };
+
+    // Save to backend
+    try {
+      const event = EVS.find(e => e.id === id);
+      const sessionData = await apiCall('POST', '/api/sessions', {
+        event_id: id,
+        actual_start_time: new Date(firstStart).toISOString(),
+        duration_seconds: prev + secs,
+        notes: S.notes[id] || null
+      });
+      S.sessionIds[id] = sessionData.session.id;
+    } catch (err) {
+      console.error('Failed to save session:', err);
+    }
+
+    S.active = null; S.elapsed = 0;
+  } else {
+    if (S.active) {
+      const secs = Math.floor((Date.now() - S.active.startMs) / 1000);
+      const prev = S.sess[S.active.id]?.secs || 0;
+      const firstStart = S.sess[S.active.id]?.startMs || S.active.startMs;
+      S.sess[S.active.id] = { secs: prev + secs, startMs: firstStart };
+    }
+    S.active = { id, startMs: Date.now() }; S.elapsed = 0;
+  }
+  render();
+};
+
+/* ── DROPDOWN MENU ────────────────────────────── */
+window.toggleMenu = function(ev, id) {
+  ev.stopPropagation();
+  S.openMenu = S.openMenu === id ? null : id;
+  render();
+};
+
+// Close menu when clicking anywhere else
+document.addEventListener('click', () => {
+  if (S.openMenu !== null) { S.openMenu = null; render(); }
+});
+
+/* ── REMOVE EVENT ─────────────────────────────── */
+window.removeEvent = async function(id) {
+  if (!confirm(`Remove this event? This can't be undone.`)) return;
+
+  // Delete from backend
+  try {
+    await apiCall('DELETE', `/api/events/${id}`);
+  } catch (err) {
+    console.error('Failed to delete event:', err);
+    alert('Failed to delete event. Please try again.');
+    return;
+  }
+
+  EVS = EVS.filter(e => e.id !== id);
+  delete S.sess[id];
+  delete S.notes[id];
+  delete S.sessionIds[id];
+  if (S.active?.id === id) { S.active = null; S.elapsed = 0; }
+  S.openMenu = null;
+  render();
+};
+
+/* ── NOTES MODAL ──────────────────────────────── */
+window.openNotes = function(id) {
+  S.openMenu = null;
+  S.notesFor = id;
+  const e = EVS.find(ev => ev.id === id);
+  document.getElementById('notes-evt-name').textContent = e ? e.n : '';
+  document.getElementById('notes-text').value = S.notes[id] || '';
+  const clearBtn = document.getElementById('notes-clear-btn');
+  clearBtn.style.display = S.notes[id] ? 'block' : 'none';
+  document.getElementById('notes-modal').classList.add('open');
+  setTimeout(() => document.getElementById('notes-text').focus(), 60);
+};
+
+window.closeNotes = function() {
+  document.getElementById('notes-modal').classList.remove('open');
+  S.notesFor = null;
+  render();
+};
+
+window.saveNote = async function() {
+  if (S.notesFor === null) return;
+  const text = document.getElementById('notes-text').value.trim();
+
+  // Save to backend if we have a session ID
+  const sessionId = S.sessionIds[S.notesFor];
+  if (sessionId) {
+    try {
+      await apiCall('PATCH', `/api/sessions/${sessionId}/notes`, {
+        notes: text || null
+      });
+    } catch (err) {
+      console.error('Failed to save note:', err);
+      alert('Failed to save note. Please try again.');
+      return;
+    }
+  }
+
+  if (text) S.notes[S.notesFor] = text;
+  else delete S.notes[S.notesFor];
+  closeNotes();
+};
+
+window.clearNote = function() {
+  document.getElementById('notes-text').value = '';
+  document.getElementById('notes-clear-btn').style.display = 'none';
+};
+
+// Close notes modal on backdrop click
+document.getElementById('notes-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('notes-modal')) closeNotes();
+});
+
+/* ── ADD EVENT MODAL ──────────────────────────── */
+window.openModal = function() {
+  pickedColor = 0;
+  document.getElementById('evt-name').value = '';
+  document.getElementById('evt-err').textContent = '';
+  const now = new Date();
+  const nextH = now.getMinutes() > 0 ? now.getHours() + 1 : now.getHours();
+  document.getElementById('evt-start').value = `${String(Math.min(nextH,23)).padStart(2,'0')}:00`;
+  document.getElementById('evt-end').value   = `${String(Math.min(nextH+1,23)).padStart(2,'0')}:00`;
+  document.getElementById('color-swatches').innerHTML = COLORS.map((c, i) =>
+    `<div class="swatch ${i===0?'picked':''}" style="background:${c.bdr}" onclick="pickColor(${i})" id="sw${i}"></div>`
+  ).join('');
+  document.getElementById('modal').classList.add('open');
+  setTimeout(() => document.getElementById('evt-name').focus(), 60);
+};
+
+window.closeModal = function() {
+  document.getElementById('modal').classList.remove('open');
+};
+
+window.pickColor = function(i) {
+  document.querySelectorAll('.swatch').forEach((s, j) => s.classList.toggle('picked', j === i));
+  pickedColor = i;
+};
+
+window.addEvent = async function() {
+  const name  = document.getElementById('evt-name').value.trim();
+  const start = document.getElementById('evt-start').value;
+  const end   = document.getElementById('evt-end').value;
+  const err   = document.getElementById('evt-err');
+  if (!name)          { err.textContent = 'Please enter an event name.'; return; }
+  if (!start || !end) { err.textContent = 'Please set start and end times.'; return; }
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  if (toM(eh, em) <= toM(sh, sm)) { err.textContent = 'End time must be after start time.'; return; }
+
+  const c = COLORS[pickedColor];
+
+  // Create start and end datetime for today
+  const today = new Date();
+  const startTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), sh, sm);
+  const endTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), eh, em);
+
+  // Save to backend
+  try {
+    const eventData = await apiCall('POST', '/api/events', {
+      name,
+      start_time: startTime.toISOString(),
+      end_time: endTime.toISOString(),
+      color: c.bdr
+    });
+
+    // Add to local array with backend ID
+    EVS.push({
+      id: eventData.event.id,
+      n: name,
+      sh, sm, eh, em,
+      fill: c.fill,
+      bdr: c.bdr,
+      bar: c.bar
+    });
+    EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
+  } catch (error) {
+    console.error('Failed to create event:', error);
+    err.textContent = 'Failed to create event. Please try again.';
+    return;
+  }
+
+  closeModal();
+  render();
+};
+
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal')) closeModal();
+});
+
+/* ── EDIT EVENT MODAL ─────────────────────────── */
+window.openEditModal = function(id) {
+  S.openMenu = null;
+  editingEventId = id;
+  const event = EVS.find(e => e.id === id);
+  if (!event) return;
+
+  document.getElementById('edit-evt-name').value = event.n;
+  document.getElementById('edit-evt-start').value = `${String(event.sh).padStart(2,'0')}:${String(event.sm).padStart(2,'0')}`;
+  document.getElementById('edit-evt-end').value = `${String(event.eh).padStart(2,'0')}:${String(event.em).padStart(2,'0')}`;
+  document.getElementById('edit-evt-err').textContent = '';
+
+  // Find the current color
+  const colorIdx = COLORS.findIndex(c => c.bdr === event.bdr);
+  editPickedColor = colorIdx >= 0 ? colorIdx : 0;
+
+  document.getElementById('edit-color-swatches').innerHTML = COLORS.map((c, i) =>
+    `<div class="swatch ${i===editPickedColor?'picked':''}" style="background:${c.bdr}" onclick="pickEditColor(${i})" id="edit-sw${i}"></div>`
+  ).join('');
+
+  document.getElementById('edit-modal').classList.add('open');
+  setTimeout(() => document.getElementById('edit-evt-name').focus(), 60);
+  render();
+};
+
+window.closeEditModal = function() {
+  document.getElementById('edit-modal').classList.remove('open');
+  editingEventId = null;
+};
+
+window.pickEditColor = function(i) {
+  document.querySelectorAll('#edit-color-swatches .swatch').forEach((s, j) => s.classList.toggle('picked', j === i));
+  editPickedColor = i;
+};
+
+window.saveEditEvent = async function() {
+  if (!editingEventId) return;
+
+  const name  = document.getElementById('edit-evt-name').value.trim();
+  const start = document.getElementById('edit-evt-start').value;
+  const end   = document.getElementById('edit-evt-end').value;
+  const err   = document.getElementById('edit-evt-err');
+
+  if (!name)          { err.textContent = 'Please enter an event name.'; return; }
+  if (!start || !end) { err.textContent = 'Please set start and end times.'; return; }
+
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  if (toM(eh, em) <= toM(sh, sm)) { err.textContent = 'End time must be after start time.'; return; }
+
+  const c = COLORS[editPickedColor];
+  const today = new Date();
+  const startTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), sh, sm);
+  const endTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), eh, em);
+
+  // Update via API
+  try {
+    await apiCall('PATCH', `/api/events/${editingEventId}`, {
+      name,
+      start_time: startTime.toISOString(),
+      end_time: endTime.toISOString(),
+      color: c.bdr
+    });
+
+    // Update local array
+    const event = EVS.find(e => e.id === editingEventId);
+    if (event) {
+      event.n = name;
+      event.sh = sh;
+      event.sm = sm;
+      event.eh = eh;
+      event.em = em;
+      event.fill = c.fill;
+      event.bdr = c.bdr;
+      event.bar = c.bar;
+    }
+    EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
+  } catch (error) {
+    console.error('Failed to update event:', error);
+    err.textContent = 'Failed to update event. Please try again.';
+    return;
+  }
+
+  closeEditModal();
+  render();
+};
+
+document.getElementById('edit-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('edit-modal')) closeEditModal();
+});
+
+/* ── TIMER TICK ───────────────────────────────── */
+setInterval(() => {
+  S.now = new Date();
+  if (S.active) {
+    S.elapsed = Math.floor((Date.now() - S.active.startMs) / 1000);
+    // Fast partial updates — timer text and actual duration label
+    const timerEl = document.getElementById(`tmr-${S.active.id}`);
+    if (timerEl) timerEl.textContent = `⏱ ${ftimer(S.elapsed)}`;
+    const durEl = document.getElementById(`actual-dur-${S.active.id}`);
+    if (durEl) durEl.textContent = fdur(Math.floor(S.elapsed / 60));
+  }
+}, 1000);
+
+/* ── DOWNLOAD DATA ────────────────────────────── */
+window.downloadData = async function() {
+  try {
+    const data = await apiCall('GET', '/api/export');
+
+    // Create CSV content
+    const csvRows = [];
+
+    // Header
+    csvRows.push(['Event Name', 'Planned Start', 'Planned End', 'Color', 'Actual Start', 'Duration (minutes)', 'Notes'].join(','));
+
+    // Group sessions by event_id
+    const sessionsByEvent = {};
+    data.sessions.forEach(session => {
+      if (session.event_id) {
+        if (!sessionsByEvent[session.event_id]) sessionsByEvent[session.event_id] = [];
+        sessionsByEvent[session.event_id].push(session);
+      }
+    });
+
+    // Add events with their sessions
+    data.events.forEach(event => {
+      const startTime = new Date(event.start_time);
+      const endTime = new Date(event.end_time);
+      const sessions = sessionsByEvent[event.id] || [];
+
+      if (sessions.length === 0) {
+        // Event with no sessions
+        csvRows.push([
+          `"${event.name.replace(/"/g, '""')}"`,
+          startTime.toLocaleString(),
+          endTime.toLocaleString(),
+          event.color,
+          '',
+          '',
+          ''
+        ].join(','));
+      } else {
+        // Event with sessions
+        sessions.forEach(session => {
+          const actualStart = new Date(session.actual_start_time);
+          const durationMins = Math.round(session.duration_seconds / 60);
+          const notes = session.notes ? `"${session.notes.replace(/"/g, '""')}"` : '';
+
+          csvRows.push([
+            `"${event.name.replace(/"/g, '""')}"`,
+            startTime.toLocaleString(),
+            endTime.toLocaleString(),
+            event.color,
+            actualStart.toLocaleString(),
+            durationMins,
+            notes
+          ].join(','));
+        });
+      }
+    });
+
+    // Add standalone sessions (not linked to events)
+    data.sessions.forEach(session => {
+      if (!session.event_id) {
+        const actualStart = new Date(session.actual_start_time);
+        const durationMins = Math.round(session.duration_seconds / 60);
+        const notes = session.notes ? `"${session.notes.replace(/"/g, '""')}"` : '';
+
+        csvRows.push([
+          '"[Untracked Activity]"',
+          '',
+          '',
+          '',
+          actualStart.toLocaleString(),
+          durationMins,
+          notes
+        ].join(','));
+      }
+    });
+
+    // Create and download file
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    const today = new Date();
+    const filename = `actualy-export-${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}.csv`;
+
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch (error) {
+    console.error('Failed to download data:', error);
+    alert('Failed to download data. Please try again.');
+  }
+};
+
+/* ── INITIALIZE ───────────────────────────────── */
+initAuth();
+</script>
+</body>
+</html>
