@@ -10,6 +10,7 @@ const supabase = require('./supabase');
 // Import routes
 const eventsRouter = require('./routes/events');
 const sessionsRouter = require('./routes/sessions');
+const calendarRouter = require('./routes/calendar');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -33,6 +34,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // API Routes
 app.use('/api/events', eventsRouter);
 app.use('/api/sessions', sessionsRouter);
+app.use('/api/calendar', calendarRouter);
 
 // Export endpoint - returns all events and sessions for download
 const { authenticateUser } = require('./middleware/auth');
