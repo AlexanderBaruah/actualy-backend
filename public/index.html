@@ -1077,11 +1077,8 @@ window.downloadData = async function() {
 
 /* ── GOOGLE CALENDAR SYNC ─────────────────────── */
 window.syncGoogleCalendar = async function() {
-  if (!confirm('Sync today\'s events from Google Calendar? This will add any events from your primary Google Calendar to Actualy.')) {
-    return;
-  }
-
   try {
+    // First, try to sync with existing token
     const result = await apiCall('POST', '/api/calendar/sync');
 
     if (result.success) {
@@ -1092,11 +1089,57 @@ window.syncGoogleCalendar = async function() {
   } catch (error) {
     console.error('Failed to sync calendar:', error);
 
-    // Check if it's an authorization error
-    if (error.message && error.message.includes('not connected')) {
-      if (confirm('Google Calendar is not connected. Would you like to connect it now? You will need to sign out and sign in again with Google Calendar permissions.')) {
-        // User needs to reconnect with calendar scope
-        alert('Please sign out and sign in again. When signing in, make sure to grant Google Calendar permission.');
+    // Check if it's an authorization error (needsAuth flag from backend)
+    if (error.needsAuth || (error.message && error.message.includes('not connected'))) {
+      // User needs to authorize Google Calendar access
+      if (confirm('Google Calendar is not connected. Would you like to connect it now? A popup will open to grant calendar access.')) {
+        try {
+          // Get OAuth URL from backend
+          const { url } = await apiCall('GET', '/api/calendar/oauth-url');
+
+          // Open OAuth popup
+          const width = 500;
+          const height = 600;
+          const left = window.screen.width / 2 - width / 2;
+          const top = window.screen.height / 2 - height / 2;
+
+          const popup = window.open(
+            url,
+            'Google Calendar Authorization',
+            `width=${width},height=${height},left=${left},top=${top}`
+          );
+
+          if (!popup) {
+            alert('Popup blocked! Please allow popups for this site and try again.');
+            return;
+          }
+
+          // Wait for popup to close (user completes OAuth)
+          const checkClosed = setInterval(async () => {
+            if (popup.closed) {
+              clearInterval(checkClosed);
+
+              // Try to sync again after authorization
+              if (confirm('Calendar connected! Would you like to sync your events now?')) {
+                try {
+                  const syncResult = await apiCall('POST', '/api/calendar/sync');
+                  if (syncResult.success) {
+                    alert(`Successfully synced ${syncResult.synced} event(s) from Google Calendar!`);
+                    await loadTodaysEvents();
+                    render();
+                  }
+                } catch (syncError) {
+                  console.error('Failed to sync after authorization:', syncError);
+                  alert('Failed to sync calendar. Please try again.');
+                }
+              }
+            }
+          }, 500);
+
+        } catch (authError) {
+          console.error('Failed to get OAuth URL:', authError);
+          alert('Failed to connect Google Calendar. Please try again.');
+        }
       }
     } else {
       alert('Failed to sync Google Calendar. Please try again.');

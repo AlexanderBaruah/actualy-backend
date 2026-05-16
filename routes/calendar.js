@@ -3,42 +3,189 @@ const router = express.Router();
 const { google } = require('googleapis');
 const { authenticateUser } = require('../middleware/auth');
 
-// All routes in this file require authentication
-router.use(authenticateUser);
+// OAuth2 client for incremental authorization
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}/api/calendar/oauth-callback`
+    : 'http://localhost:3000/api/calendar/oauth-callback'
+);
+
+// Store tokens temporarily (in production, use a database)
+// Map of user_id -> { access_token, refresh_token, expiry_date }
+const userCalendarTokens = new Map();
+
+/**
+ * GET /api/calendar/oauth-url
+ * Generate Google OAuth URL for calendar scope
+ * Returns the URL that the frontend should open for incremental authorization
+ */
+router.get('/oauth-url', authenticateUser, async (req, res) => {
+  try {
+    // Generate OAuth URL with calendar scope
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: ['https://www.googleapis.com/auth/calendar.readonly'],
+      state: req.user.id, // Pass user_id in state to identify user in callback
+      prompt: 'consent', // Force consent screen to get refresh token
+      include_granted_scopes: true, // Incremental authorization
+    });
+
+    res.json({ url: authUrl });
+  } catch (error) {
+    console.error('Error generating OAuth URL:', error);
+    res.status(500).json({ error: 'Failed to generate OAuth URL' });
+  }
+});
+
+/**
+ * GET /api/calendar/oauth-callback
+ * Handle OAuth callback from Google
+ * Exchanges authorization code for access token
+ */
+router.get('/oauth-callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+
+    if (!code) {
+      return res.status(400).send('Authorization code missing');
+    }
+
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code);
+
+    // Store tokens for the user (state contains user_id)
+    const userId = state;
+    userCalendarTokens.set(userId, {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expiry_date: tokens.expiry_date,
+    });
+
+    // Redirect to success page with message
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Calendar Connected</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+              background: #f5f5f5;
+            }
+            .message {
+              background: white;
+              padding: 40px;
+              border-radius: 12px;
+              box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+              text-align: center;
+              max-width: 400px;
+            }
+            h1 { color: #4285f4; margin-bottom: 16px; }
+            p { color: #666; margin-bottom: 24px; }
+            button {
+              background: #4285f4;
+              color: white;
+              border: none;
+              padding: 12px 24px;
+              border-radius: 6px;
+              font-size: 16px;
+              cursor: pointer;
+            }
+            button:hover { background: #3367d6; }
+          </style>
+        </head>
+        <body>
+          <div class="message">
+            <h1>✓ Calendar Connected!</h1>
+            <p>Your Google Calendar has been successfully connected. You can now sync your events.</p>
+            <button onclick="window.close()">Close Window</button>
+          </div>
+          <script>
+            // Try to close the popup automatically after 3 seconds
+            setTimeout(() => {
+              window.close();
+            }, 3000);
+          </script>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error('Error in OAuth callback:', error);
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Connection Failed</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+              background: #f5f5f5;
+            }
+            .message {
+              background: white;
+              padding: 40px;
+              border-radius: 12px;
+              box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+              text-align: center;
+              max-width: 400px;
+            }
+            h1 { color: #d32f2f; margin-bottom: 16px; }
+            p { color: #666; }
+          </style>
+        </head>
+        <body>
+          <div class="message">
+            <h1>✗ Connection Failed</h1>
+            <p>Failed to connect your Google Calendar. Please try again.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+});
 
 /**
  * POST /api/calendar/sync
  * Sync today's events from Google Calendar
- * Requires user to have Google Calendar scope enabled in Supabase Auth
+ * Uses calendar-specific OAuth token from incremental authorization
  */
-router.post('/sync', async (req, res) => {
+router.post('/sync', authenticateUser, async (req, res) => {
   try {
-    // Get the user's provider token from Supabase
-    const { data: { session }, error: sessionError } = await req.supabase.auth.getSession();
+    // Check if user has calendar token from incremental authorization
+    const userTokens = userCalendarTokens.get(req.user.id);
 
-    if (sessionError || !session) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-
-    // Check if user has Google provider token
-    const providerToken = session.provider_token;
-    const providerRefreshToken = session.provider_refresh_token;
-
-    if (!providerToken) {
+    if (!userTokens) {
       return res.status(400).json({
         error: 'Google Calendar not connected',
-        message: 'Please connect your Google Calendar first'
+        message: 'Please connect your Google Calendar first',
+        needsAuth: true
       });
     }
 
-    // Set up Google Calendar API client
-    const oauth2Client = new google.auth.OAuth2();
-    oauth2Client.setCredentials({
-      access_token: providerToken,
-      refresh_token: providerRefreshToken
+    // Set up Google Calendar API client with user's calendar token
+    const calendarClient = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    calendarClient.setCredentials({
+      access_token: userTokens.access_token,
+      refresh_token: userTokens.refresh_token,
+      expiry_date: userTokens.expiry_date
     });
 
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    const calendar = google.calendar({ version: 'v3', auth: calendarClient });
 
     // Get today's date range
     const today = new Date();
