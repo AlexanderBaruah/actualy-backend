@@ -4,12 +4,21 @@ const { google } = require('googleapis');
 const { authenticateUser } = require('../middleware/auth');
 
 // OAuth2 client for incremental authorization
+// Note: This redirect URI must match exactly what's configured in Google Cloud Console
+const redirectUri = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}/api/calendar/oauth-callback`
+  : 'http://localhost:3000/api/calendar/oauth-callback';
+
+console.log('[Calendar] OAuth2 Client Configuration:');
+console.log('[Calendar] - CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? 'Set' : 'Missing');
+console.log('[Calendar] - CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? 'Set' : 'Missing');
+console.log('[Calendar] - VERCEL_URL:', process.env.VERCEL_URL || 'Not set (using localhost)');
+console.log('[Calendar] - Redirect URI:', redirectUri);
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}/api/calendar/oauth-callback`
-    : 'http://localhost:3000/api/calendar/oauth-callback'
+  redirectUri
 );
 
 // Store tokens temporarily (in production, use a database)
@@ -23,6 +32,8 @@ const userCalendarTokens = new Map();
  */
 router.get('/oauth-url', authenticateUser, async (req, res) => {
   try {
+    console.log('[Calendar] Generating OAuth URL for user:', req.user.id);
+
     // Generate OAuth URL with calendar scope
     const authUrl = oauth2Client.generateAuthUrl({
       access_type: 'offline',
@@ -32,9 +43,12 @@ router.get('/oauth-url', authenticateUser, async (req, res) => {
       include_granted_scopes: true, // Incremental authorization
     });
 
+    console.log('[Calendar] Generated OAuth URL:', authUrl);
+    console.log('[Calendar] Redirect URI in use:', redirectUri);
+
     res.json({ url: authUrl });
   } catch (error) {
-    console.error('Error generating OAuth URL:', error);
+    console.error('[Calendar] Error generating OAuth URL:', error);
     res.status(500).json({ error: 'Failed to generate OAuth URL' });
   }
 });
