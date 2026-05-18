@@ -232,6 +232,7 @@ const S = {
   sessionIds: {}, // event id -> backend session id
   historyData: null, // {events: [], sessions: []}
   expandedDay: null, // date string for expanded day
+  saving: false, // prevent double-clicking Stop button
 };
 
 /* ── AUTH & API ────────────────────────────────── */
@@ -703,9 +704,13 @@ async function loadHistoryData() {
 }
 
 window.tog = async id => {
+  // Prevent double-clicking from saving twice
+  if (S.saving) return;
+
   S.openMenu = null;
   if (S.active?.id === id) {
     // Stopping timer - save session to backend
+    S.saving = true; // Block further clicks
     const secs = Math.floor((Date.now() - S.active.startMs) / 1000);
     const prev = S.sess[id]?.secs || 0;
     const firstStart = S.sess[id]?.startMs || S.active.startMs;
@@ -721,8 +726,13 @@ window.tog = async id => {
         notes: S.notes[id] || null
       });
       S.sessionIds[id] = sessionData.session.id;
+
+      // Clear active session from localStorage
+      localStorage.removeItem('activeSession');
     } catch (err) {
       console.error('Failed to save session:', err);
+    } finally {
+      S.saving = false; // Re-enable clicking
     }
 
     S.active = null; S.elapsed = 0;
@@ -734,6 +744,13 @@ window.tog = async id => {
       S.sess[S.active.id] = { secs: prev + secs, startMs: firstStart };
     }
     S.active = { id, startMs: Date.now() }; S.elapsed = 0;
+
+    // Save active session to localStorage for recovery
+    localStorage.setItem('activeSession', JSON.stringify({
+      id,
+      startMs: Date.now(),
+      firstStart: S.sess[id]?.startMs || Date.now()
+    }));
   }
   render();
 };
@@ -1192,8 +1209,57 @@ window.confirmGcalConnect = async function() {
   }
 };
 
+/* ── SESSION RECOVERY & AUTO-SAVE ────────────── */
+// Recover active session from localStorage on page load
+function recoverActiveSession() {
+  try {
+    const saved = localStorage.getItem('activeSession');
+    if (saved) {
+      const { id, startMs, firstStart } = JSON.parse(saved);
+      const elapsed = Math.floor((Date.now() - startMs) / 1000);
+
+      // Only recover if event exists and session is less than 24 hours old
+      if (EVS.find(e => e.id === id) && elapsed < 86400) {
+        S.active = { id, startMs };
+        S.sess[id] = { secs: 0, startMs: firstStart };
+        S.elapsed = elapsed;
+        console.log(`Recovered active session for event ${id}, elapsed: ${elapsed}s`);
+      } else {
+        localStorage.removeItem('activeSession');
+      }
+    }
+  } catch (err) {
+    console.error('Failed to recover session:', err);
+    localStorage.removeItem('activeSession');
+  }
+}
+
+// Auto-save active session every 30 seconds
+function startAutoSave() {
+  setInterval(() => {
+    if (S.active) {
+      const secs = Math.floor((Date.now() - S.active.startMs) / 1000);
+      const prev = S.sess[S.active.id]?.secs || 0;
+      const firstStart = S.sess[S.active.id]?.startMs || S.active.startMs;
+
+      // Update localStorage
+      localStorage.setItem('activeSession', JSON.stringify({
+        id: S.active.id,
+        startMs: S.active.startMs,
+        firstStart
+      }));
+
+      console.log(`Auto-saved session for event ${S.active.id}, elapsed: ${prev + secs}s`);
+    }
+  }, 30000); // Every 30 seconds
+}
+
 /* ── INITIALIZE ───────────────────────────────── */
-initAuth();
+initAuth().then(() => {
+  recoverActiveSession();
+  render();
+  startAutoSave();
+});
 </script>
 </body>
 </html>
