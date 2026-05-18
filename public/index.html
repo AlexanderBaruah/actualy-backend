@@ -179,7 +179,7 @@
 // Initialize Supabase
 const SUPABASE_URL = 'https://kodxtnmprtlbsafxizrw.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_07V1Pb-IXSLY9VSYQWs3VQ_It76Cvny';
-const API_BASE = 'http://localhost:3000';
+const API_BASE = window.location.origin; // Use current domain (works for both localhost and production)
 const { createClient } = supabase;
 const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -285,7 +285,15 @@ async function apiCall(method, path, body = null) {
   if (!res.ok) {
     const errorText = await res.text();
     console.error(`API error ${res.status}:`, errorText);
-    throw new Error(`API error: ${res.status}`);
+
+    // Try to parse error as JSON
+    try {
+      const errorJson = JSON.parse(errorText);
+      throw errorJson; // Throw the parsed error object
+    } catch (e) {
+      // If not JSON, throw a simple error object
+      throw { error: `API error: ${res.status}`, message: errorText };
+    }
   }
   return await res.json();
 }
