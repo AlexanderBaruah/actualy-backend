@@ -1234,7 +1234,7 @@ function recoverActiveSession() {
   }
 }
 
-// Auto-save active session every 30 seconds
+// Auto-save active session every 5 seconds
 function startAutoSave() {
   setInterval(() => {
     if (S.active) {
@@ -1251,7 +1251,7 @@ function startAutoSave() {
 
       console.log(`Auto-saved session for event ${S.active.id}, elapsed: ${prev + secs}s`);
     }
-  }, 30000); // Every 30 seconds
+  }, 5000); // Every 5 seconds
 }
 
 /* ── INITIALIZE ───────────────────────────────── */
