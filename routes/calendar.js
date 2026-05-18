@@ -210,6 +210,8 @@ router.post('/sync', authenticateUser, async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
+    console.log('[Calendar] Fetching events from', today.toISOString(), 'to', tomorrow.toISOString());
+
     // Fetch today's events from Google Calendar
     const calendarResponse = await calendar.events.list({
       calendarId: 'primary',
@@ -220,12 +222,23 @@ router.post('/sync', authenticateUser, async (req, res) => {
     });
 
     const googleEvents = calendarResponse.data.items || [];
+    console.log('[Calendar] Found', googleEvents.length, 'total events from Google Calendar');
+
     const syncedEvents = [];
+    const skippedEvents = [];
 
     // Import each Google Calendar event
     for (const gEvent of googleEvents) {
+      console.log('[Calendar] Processing event:', gEvent.summary, {
+        start: gEvent.start,
+        end: gEvent.end,
+        id: gEvent.id
+      });
+
       // Skip all-day events or events without start/end times
       if (!gEvent.start?.dateTime || !gEvent.end?.dateTime) {
+        console.log('[Calendar] Skipping event (no dateTime):', gEvent.summary);
+        skippedEvents.push({ name: gEvent.summary, reason: 'no dateTime' });
         continue;
       }
 
@@ -238,11 +251,13 @@ router.post('/sync', authenticateUser, async (req, res) => {
         .single();
 
       if (existing) {
-        // Event already synced, skip
+        console.log('[Calendar] Event already synced, skipping:', gEvent.summary);
+        skippedEvents.push({ name: gEvent.summary, reason: 'already synced' });
         continue;
       }
 
       // Create event in Actualy
+      console.log('[Calendar] Inserting new event:', gEvent.summary);
       const { data: newEvent, error: insertError } = await req.supabase
         .from('events')
         .insert({
@@ -257,15 +272,24 @@ router.post('/sync', authenticateUser, async (req, res) => {
         .select()
         .single();
 
-      if (!insertError && newEvent) {
+      if (insertError) {
+        console.error('[Calendar] Error inserting event:', gEvent.summary, insertError);
+        skippedEvents.push({ name: gEvent.summary, reason: `insert error: ${insertError.message}` });
+      } else if (newEvent) {
+        console.log('[Calendar] Successfully synced event:', gEvent.summary);
         syncedEvents.push(newEvent);
       }
     }
 
+    console.log('[Calendar] Sync complete. Synced:', syncedEvents.length, 'Skipped:', skippedEvents.length);
+    console.log('[Calendar] Skipped events:', skippedEvents);
+
     res.json({
       success: true,
       synced: syncedEvents.length,
-      events: syncedEvents
+      events: syncedEvents,
+      skipped: skippedEvents.length,
+      skippedDetails: skippedEvents
     });
 
   } catch (error) {
