@@ -1108,7 +1108,12 @@ window.syncGoogleCalendar = async function() {
       if (confirm('Google Calendar is not connected. Would you like to connect it now? A popup will open to grant calendar access.')) {
         try {
           // Get OAuth URL from backend
-          const { url } = await apiCall('GET', '/api/calendar/oauth-url');
+          const oauthResponse = await apiCall('GET', '/api/calendar/oauth-url');
+          console.log('OAuth Response:', oauthResponse);
+          console.log('Redirect URI being used:', oauthResponse.redirect_uri);
+          console.log('VERCEL_URL:', oauthResponse.vercel_url);
+
+          const { url } = oauthResponse;
 
           // Open OAuth popup
           const width = 500;

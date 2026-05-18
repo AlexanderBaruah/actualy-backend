@@ -46,7 +46,12 @@ router.get('/oauth-url', authenticateUser, async (req, res) => {
     console.log('[Calendar] Generated OAuth URL:', authUrl);
     console.log('[Calendar] Redirect URI in use:', redirectUri);
 
-    res.json({ url: authUrl });
+    // Return both URL and redirect URI for debugging
+    res.json({
+      url: authUrl,
+      redirect_uri: redirectUri, // For debugging - shows exact redirect URI being used
+      vercel_url: process.env.VERCEL_URL || 'not set'
+    });
   } catch (error) {
     console.error('[Calendar] Error generating OAuth URL:', error);
     res.status(500).json({ error: 'Failed to generate OAuth URL' });
