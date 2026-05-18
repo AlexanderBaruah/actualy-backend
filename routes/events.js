@@ -17,12 +17,19 @@ router.get('/today', async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
 
+    console.log('[Events] Fetching events for today:', today.toISOString(), 'to', tomorrow.toISOString());
+
     const { data, error } = await req.supabase
       .from('events')
       .select('*')
       .gte('start_time', today.toISOString())
       .lt('start_time', tomorrow.toISOString())
       .order('start_time', { ascending: true });
+
+    console.log('[Events] Found', data?.length || 0, 'events');
+    if (data && data.length > 0) {
+      console.log('[Events] First event:', data[0].name, data[0].start_time);
+    }
 
     if (error) {
       console.error('Error fetching events:', error);
