@@ -1088,9 +1088,14 @@ window.syncGoogleCalendar = async function() {
     }
   } catch (error) {
     console.error('Failed to sync calendar:', error);
+    console.error('Error details:', JSON.stringify(error, null, 2));
 
-    // Check if it's an authorization error (needsAuth flag from backend)
-    if (error.needsAuth || (error.message && error.message.includes('not connected'))) {
+    // Check if it's an authorization error (needsAuth flag from backend or error message)
+    const needsAuth = error.needsAuth ||
+                      (error.error && error.error.includes('not connected')) ||
+                      (error.message && error.message.includes('not connected'));
+
+    if (needsAuth) {
       // User needs to authorize Google Calendar access
       if (confirm('Google Calendar is not connected. Would you like to connect it now? A popup will open to grant calendar access.')) {
         try {
@@ -1130,7 +1135,7 @@ window.syncGoogleCalendar = async function() {
                   }
                 } catch (syncError) {
                   console.error('Failed to sync after authorization:', syncError);
-                  alert('Failed to sync calendar. Please try again.');
+                  alert(`Failed to sync calendar: ${syncError.error || syncError.message || 'Unknown error'}`);
                 }
               }
             }
@@ -1138,11 +1143,13 @@ window.syncGoogleCalendar = async function() {
 
         } catch (authError) {
           console.error('Failed to get OAuth URL:', authError);
-          alert('Failed to connect Google Calendar. Please try again.');
+          alert(`Failed to connect Google Calendar: ${authError.error || authError.message || 'Unknown error'}`);
         }
       }
     } else {
-      alert('Failed to sync Google Calendar. Please try again.');
+      // Show detailed error message
+      const errorMsg = error.error || error.message || 'Unknown error';
+      alert(`Failed to sync Google Calendar: ${errorMsg}\n\nCheck the browser console for more details.`);
     }
   }
 };
