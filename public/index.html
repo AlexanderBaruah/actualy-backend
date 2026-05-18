@@ -321,7 +321,8 @@ async function loadTodaysEvents() {
     EVS = data.events.map(e => {
       const start = new Date(e.start_time);
       const end = new Date(e.end_time);
-      const colorIdx = COLORS.findIndex(c => c.bdr === e.color) || 0;
+      let colorIdx = COLORS.findIndex(c => c.bdr === e.color);
+      if (colorIdx === -1) colorIdx = 1; // Default to blue if color not found
       return {
         id: e.id,
         n: e.name,
