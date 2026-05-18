@@ -5,9 +5,7 @@ const { authenticateUser } = require('../middleware/auth');
 
 // OAuth2 client for incremental authorization
 // Note: This redirect URI must match exactly what's configured in Google Cloud Console
-const redirectUri = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}/api/calendar/oauth-callback`
-  : 'http://localhost:3000/api/calendar/oauth-callback';
+const redirectUri = 'https://actualy-backend.vercel.app/api/calendar/oauth-callback';
 
 console.log('[Calendar] OAuth2 Client Configuration:');
 console.log('[Calendar] - CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? 'Set' : 'Missing');
