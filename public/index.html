@@ -1026,11 +1026,15 @@ window.downloadData = async function() {
   try {
     const data = await apiCall('GET', '/api/export');
 
+    // Helper to format dates nicely
+    const formatDate = (dateStr) => {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +
+             d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    };
+
     // Create CSV content
     const csvRows = [];
-
-    // Header
-    csvRows.push(['Event Name', 'Planned Start', 'Planned End', 'Color', 'Actual Start', 'Duration (minutes)', 'Notes'].join(','));
 
     // Group sessions by event_id
     const sessionsByEvent = {};
@@ -1041,61 +1045,62 @@ window.downloadData = async function() {
       }
     });
 
-    // Add events with their sessions
+    // Calculate summary statistics
+    let totalPlannedMins = 0;
+    let totalTrackedMins = 0;
+    let validEventCount = 0;
+
+    // Filter and calculate
+    const validRows = [];
     data.events.forEach(event => {
       const startTime = new Date(event.start_time);
       const endTime = new Date(event.end_time);
+      const plannedMins = Math.round((endTime - startTime) / 60000);
       const sessions = sessionsByEvent[event.id] || [];
+      const trackedMins = sessions.reduce((sum, s) => sum + Math.round(s.duration_seconds / 60), 0);
 
-      if (sessions.length === 0) {
-        // Event with no sessions
-        csvRows.push([
-          `"${event.name.replace(/"/g, '""')}"`,
-          startTime.toLocaleString(),
-          endTime.toLocaleString(),
-          event.color,
-          '',
-          '',
-          ''
-        ].join(','));
-      } else {
-        // Event with sessions
-        sessions.forEach(session => {
-          const actualStart = new Date(session.actual_start_time);
-          const durationMins = Math.round(session.duration_seconds / 60);
-          const notes = session.notes ? `"${session.notes.replace(/"/g, '""')}"` : '';
+      // Skip events with 0 duration
+      if (trackedMins === 0) return;
 
-          csvRows.push([
-            `"${event.name.replace(/"/g, '""')}"`,
-            startTime.toLocaleString(),
-            endTime.toLocaleString(),
-            event.color,
-            actualStart.toLocaleString(),
-            durationMins,
-            notes
-          ].join(','));
-        });
-      }
-    });
+      validEventCount++;
+      totalPlannedMins += plannedMins;
+      totalTrackedMins += trackedMins;
 
-    // Add standalone sessions (not linked to events)
-    data.sessions.forEach(session => {
-      if (!session.event_id) {
+      sessions.forEach(session => {
         const actualStart = new Date(session.actual_start_time);
         const durationMins = Math.round(session.duration_seconds / 60);
         const notes = session.notes ? `"${session.notes.replace(/"/g, '""')}"` : '';
+        const compliance = plannedMins > 0 ? Math.round((trackedMins / plannedMins) * 100) : 0;
 
-        csvRows.push([
-          '"[Untracked Activity]"',
-          '',
-          '',
-          '',
-          actualStart.toLocaleString(),
+        validRows.push([
+          `"${event.name.replace(/"/g, '""')}"`,
+          formatDate(event.start_time),
+          formatDate(event.end_time),
+          formatDate(session.actual_start_time),
           durationMins,
+          `${compliance}%`,
           notes
-        ].join(','));
-      }
+        ]);
+      });
     });
+
+    const overallCompliance = totalPlannedMins > 0 ? Math.round((totalTrackedMins / totalPlannedMins) * 100) : 0;
+    const exportDate = new Date();
+
+    // Summary section
+    csvRows.push(['Actualy Time Tracking Export']);
+    csvRows.push([`Export Date: ${formatDate(exportDate.toISOString())}`]);
+    csvRows.push([`Total Events: ${validEventCount}`]);
+    csvRows.push([`Total Planned Time: ${totalPlannedMins} minutes`]);
+    csvRows.push([`Total Tracked Time: ${totalTrackedMins} minutes`]);
+    csvRows.push([`Overall Compliance: ${overallCompliance}%`]);
+    csvRows.push([]); // Empty row
+
+    // Header
+    csvRows.push(['Event Name', 'Planned Start', 'Planned End', 'Actual Start', 'Duration (minutes)', 'Compliance %', 'Notes'].join(','));
+
+    // Data rows
+    validRows.forEach(row => csvRows.push(row.join(',')));
 
     // Create and download file
     const csvContent = csvRows.join('\n');
@@ -1103,8 +1108,7 @@ window.downloadData = async function() {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
 
-    const today = new Date();
-    const filename = `actualy-export-${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}.csv`;
+    const filename = `actualy-export-${exportDate.getFullYear()}-${String(exportDate.getMonth()+1).padStart(2,'0')}-${String(exportDate.getDate()).padStart(2,'0')}.csv`;
 
     link.setAttribute('href', url);
     link.setAttribute('download', filename);
