@@ -11,13 +11,22 @@ router.use(authenticateUser);
  */
 router.get('/today', async (req, res) => {
   try {
-    // Get start and end of today in UTC
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    // Get today's date range in Pacific Time (UTC-7/UTC-8)
+    const now = new Date();
+    const pacificOffset = -7 * 60; // Pacific Daylight Time offset in minutes
+    const localTime = new Date(now.getTime() + (pacificOffset * 60 * 1000));
+
+    // Get start of today in Pacific Time
+    const todayPacific = new Date(localTime.getFullYear(), localTime.getMonth(), localTime.getDate());
+    const tomorrowPacific = new Date(todayPacific);
+    tomorrowPacific.setDate(tomorrowPacific.getDate() + 1);
+
+    // Convert back to UTC for the database query
+    const today = new Date(todayPacific.getTime() - (pacificOffset * 60 * 1000));
+    const tomorrow = new Date(tomorrowPacific.getTime() - (pacificOffset * 60 * 1000));
 
     console.log('[Events] Fetching events for today:', today.toISOString(), 'to', tomorrow.toISOString());
+    console.log('[Events] Pacific Time date:', todayPacific.toDateString());
 
     const { data, error } = await req.supabase
       .from('events')

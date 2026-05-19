@@ -204,13 +204,23 @@ router.post('/sync', authenticateUser, async (req, res) => {
 
     const calendar = google.calendar({ version: 'v3', auth: calendarClient });
 
-    // Get today's date range
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Get today's date range in Pacific Time (UTC-7/UTC-8)
+    // Convert current UTC time to Pacific Time, then get start/end of day
+    const now = new Date();
+    const pacificOffset = -7 * 60; // Pacific Daylight Time offset in minutes
+    const localTime = new Date(now.getTime() + (pacificOffset * 60 * 1000));
+
+    // Get start of today in Pacific Time
+    const todayPacific = new Date(localTime.getFullYear(), localTime.getMonth(), localTime.getDate());
+    const tomorrowPacific = new Date(todayPacific);
+    tomorrowPacific.setDate(tomorrowPacific.getDate() + 1);
+
+    // Convert back to UTC for the API query
+    const today = new Date(todayPacific.getTime() - (pacificOffset * 60 * 1000));
+    const tomorrow = new Date(tomorrowPacific.getTime() - (pacificOffset * 60 * 1000));
 
     console.log('[Calendar] Fetching events from', today.toISOString(), 'to', tomorrow.toISOString());
+    console.log('[Calendar] Pacific Time date:', todayPacific.toDateString());
 
     // Fetch today's events from Google Calendar
     const calendarResponse = await calendar.events.list({
