@@ -6,6 +6,7 @@
 <title>Actualy</title>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #111; color: #fff; font-family: 'Outfit', system-ui, sans-serif; min-height: 100vh; }
@@ -78,6 +79,14 @@
   .auth-box { background: #1c1c1c; border-radius: 16px; padding: 40px; border: 1px solid #2a2a2a; text-align: center; max-width: 400px; width: 100%; }
   .auth-btn { background: #fff; border: none; border-radius: 10px; color: #111; padding: 12px 24px; cursor: pointer; font-size: 15px; font-weight: 600; font-family: inherit; transition: background .15s; display: inline-flex; align-items: center; gap: 10px; }
   .auth-btn:hover { background: #e5e5e5; }
+
+  /* History export UI */
+  .day-checkbox { width: 20px; height: 20px; cursor: pointer; accent-color: #0f9d8b; margin-right: 10px; flex-shrink: 0; }
+  .export-floating { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: #0f9d8b; color: #fff; border: none; border-radius: 12px; padding: 14px 28px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; box-shadow: 0 8px 24px rgba(15,157,139,0.4); transition: all .2s; z-index: 60; }
+  .export-floating:hover { background: #0d8a7a; transform: translateX(-50%) translateY(-2px); box-shadow: 0 12px 32px rgba(15,157,139,0.5); }
+  .date-range-picker { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; padding: 12px 16px; background: #1a1a1a; border-radius: 10px; border: 1px solid #2a2a2a; }
+  .date-range-picker label { font-size: 13px; color: #666; margin-right: 6px; }
+  .date-range-picker input { background: #111; border: 1px solid #2e2e2e; border-radius: 6px; color: #fff; padding: 6px 10px; font-size: 13px; font-family: inherit; color-scheme: dark; }
 </style>
 </head>
 <body>
@@ -233,6 +242,9 @@ const S = {
   historyData: null, // {events: [], sessions: []}
   expandedDay: null, // date string for expanded day
   saving: false, // prevent double-clicking Stop button
+  selectedDays: new Set(), // Set of selected date keys for export
+  dateRangeStart: '', // Start date for range picker
+  dateRangeEnd: '', // End date for range picker
 };
 
 /* ── AUTH & API ────────────────────────────────── */
@@ -526,7 +538,16 @@ function rHistory() {
     </div>`;
   }
 
-  return `<div style="display:flex;flex-direction:column;gap:10px">${sortedDays.map(dateKey => {
+  const selectedCount = S.selectedDays.size;
+
+  return `
+    <div class="date-range-picker">
+      <label>From:</label>
+      <input type="date" id="date-start" value="${S.dateRangeStart}" onchange="updateDateRange('start', this.value)">
+      <label>To:</label>
+      <input type="date" id="date-end" value="${S.dateRangeEnd}" onchange="updateDateRange('end', this.value)">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">${sortedDays.map(dateKey => {
     const dayData = dayMap[dateKey];
     const d = new Date(dateKey + 'T12:00:00');
     const isToday = dateKey === new Date().toISOString().split('T')[0];
@@ -544,27 +565,34 @@ function rHistory() {
     const complianceColor = compliance === 0 ? '#666' : compliance < 50 ? '#f59e0b' : compliance < 80 ? '#0f9d8b' : '#10b981';
 
     const expanded = S.expandedDay === dateKey;
+    const isChecked = S.selectedDays.has(dateKey);
 
-    return `<div class="scard" style="cursor:pointer;transition:all .2s" onclick="toggleDay('${dateKey}')">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div>
-          <div style="font-size:15px;font-weight:600;margin-bottom:4px">${dayLabel}</div>
-          <div style="font-size:12px;color:#666">${dayData.events.length} events • ${dayData.sessions.length} sessions</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:14px">
-          <div style="text-align:right">
-            <div style="font-size:13px;color:${complianceColor};font-weight:600">${compliance}%</div>
-            <div style="font-size:11px;color:#666">compliance</div>
+    return `<div class="scard" style="transition:all .2s">
+      <div style="display:flex;align-items:center;gap:12px">
+        <input type="checkbox" class="day-checkbox" ${isChecked ? 'checked' : ''}
+          onclick="event.stopPropagation(); toggleDaySelection('${dateKey}')">
+        <div style="flex:1;cursor:pointer" onclick="toggleDay('${dateKey}')">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="font-size:15px;font-weight:600;margin-bottom:4px">${dayLabel}</div>
+              <div style="font-size:12px;color:#666">${dayData.events.length} events • ${dayData.sessions.length} sessions</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px">
+              <div style="text-align:right">
+                <div style="font-size:13px;color:${complianceColor};font-weight:600">${compliance}%</div>
+                <div style="font-size:11px;color:#666">compliance</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:13px;color:#fff;font-weight:500">${fdur(totalPlanned)}</div>
+                <div style="font-size:11px;color:#666">planned</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:13px;color:#0f9d8b;font-weight:500">${fdur(totalTracked)}</div>
+                <div style="font-size:11px;color:#666">tracked</div>
+              </div>
+              <span style="font-size:18px;color:#666">${expanded ? '▼' : '▶'}</span>
+            </div>
           </div>
-          <div style="text-align:right">
-            <div style="font-size:13px;color:#fff;font-weight:500">${fdur(totalPlanned)}</div>
-            <div style="font-size:11px;color:#666">planned</div>
-          </div>
-          <div style="text-align:right">
-            <div style="font-size:13px;color:#0f9d8b;font-weight:500">${fdur(totalTracked)}</div>
-            <div style="font-size:11px;color:#666">tracked</div>
-          </div>
-          <span style="font-size:18px;color:#666">${expanded ? '▼' : '▶'}</span>
         </div>
       </div>
       ${expanded ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid #2a2a2a">
@@ -599,12 +627,145 @@ function rHistory() {
         </div>` : ''}
       </div>` : ''}
     </div>`;
-  }).join('')}</div>`;
+  }).join('')}</div>
+    ${selectedCount > 0 ? `<button class="export-floating" onclick="exportSelectedDays()">
+      📊 Export selected (${selectedCount} ${selectedCount === 1 ? 'day' : 'days'})
+    </button>` : ''}`;
 }
 
 window.toggleDay = function(dateKey) {
   S.expandedDay = S.expandedDay === dateKey ? null : dateKey;
   render();
+};
+
+window.toggleDaySelection = function(dateKey) {
+  if (S.selectedDays.has(dateKey)) {
+    S.selectedDays.delete(dateKey);
+  } else {
+    S.selectedDays.add(dateKey);
+  }
+  render();
+};
+
+window.updateDateRange = function(type, value) {
+  if (type === 'start') {
+    S.dateRangeStart = value;
+  } else {
+    S.dateRangeEnd = value;
+  }
+
+  // Auto-select days within range
+  if (S.dateRangeStart && S.dateRangeEnd && S.historyData) {
+    const start = new Date(S.dateRangeStart);
+    const end = new Date(S.dateRangeEnd);
+
+    S.historyData.events.forEach(e => {
+      const dateKey = new Date(e.start_time).toISOString().split('T')[0];
+      const eventDate = new Date(dateKey);
+      if (eventDate >= start && eventDate <= end) {
+        S.selectedDays.add(dateKey);
+      }
+    });
+  }
+
+  render();
+};
+
+window.exportSelectedDays = function() {
+  if (!S.historyData || S.selectedDays.size === 0) return;
+
+  // Group data by selected dates
+  const selectedDates = Array.from(S.selectedDays).sort();
+
+  // Sheet 1: Planned events
+  const plannedRows = [['Date', 'Event Name', 'Start', 'End', 'Duration (mins)', 'Source']];
+
+  // Sheet 2: Sessions
+  const sessionRows = [['Date', 'Event Name', 'Started At', 'Duration (mins)', 'Notes']];
+
+  // Sheet 3: Daily Summary
+  const summaryRows = [['Date', 'Events Planned', 'Planned Time (mins)', 'Tracked Time (mins)', 'Sessions', 'Compliance %']];
+
+  // Process each selected day
+  selectedDates.forEach(dateKey => {
+    // Get events for this date
+    const dayEvents = S.historyData.events.filter(e =>
+      new Date(e.start_time).toISOString().split('T')[0] === dateKey
+    );
+
+    // Get sessions for this date
+    const daySessions = S.historyData.sessions.filter(s =>
+      new Date(s.actual_start_time).toISOString().split('T')[0] === dateKey
+    );
+
+    const date = new Date(dateKey + 'T12:00:00');
+    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    // Add planned events to Sheet 1
+    dayEvents.forEach(e => {
+      const start = new Date(e.start_time);
+      const end = new Date(e.end_time);
+      const duration = Math.floor((end - start) / 60000);
+      const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +
+                      start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +
+                    end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const source = e.synced_from_calendar ? 'Google Calendar' : 'Manual';
+
+      plannedRows.push([dateStr, e.name, startStr, endStr, duration, source]);
+    });
+
+    // Add sessions to Sheet 2
+    daySessions.forEach(s => {
+      const start = new Date(s.actual_start_time);
+      const duration = Math.floor(s.duration_seconds / 60);
+      const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' +
+                      start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const event = s.event_id ? dayEvents.find(e => e.id === s.event_id) : null;
+      const eventName = event ? event.name : '[Untracked Activity]';
+      const notes = s.notes || '';
+
+      sessionRows.push([dateStr, eventName, startStr, duration, notes]);
+    });
+
+    // Calculate daily summary
+    const totalPlanned = dayEvents.reduce((sum, e) => {
+      const start = new Date(e.start_time);
+      const end = new Date(e.end_time);
+      return sum + Math.floor((end - start) / 60000);
+    }, 0);
+
+    const totalTracked = daySessions.reduce((sum, s) => sum + Math.floor(s.duration_seconds / 60), 0);
+    const compliance = totalPlanned > 0 ? Math.round((totalTracked / totalPlanned) * 100) : 0;
+
+    summaryRows.push([
+      dateStr,
+      dayEvents.length,
+      totalPlanned,
+      totalTracked,
+      daySessions.length,
+      compliance + '%'
+    ]);
+  });
+
+  // Create workbook with 3 sheets
+  const wb = XLSX.utils.book_new();
+
+  const ws1 = XLSX.utils.aoa_to_sheet(plannedRows);
+  XLSX.utils.book_append_sheet(wb, ws1, 'Planned');
+
+  const ws2 = XLSX.utils.aoa_to_sheet(sessionRows);
+  XLSX.utils.book_append_sheet(wb, ws2, 'Sessions');
+
+  const ws3 = XLSX.utils.aoa_to_sheet(summaryRows);
+  XLSX.utils.book_append_sheet(wb, ws3, 'Daily Summary');
+
+  // Generate filename
+  const today = new Date();
+  const filename = `actualy-export-${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}.xlsx`;
+
+  // Download
+  XLSX.writeFile(wb, filename);
 };
 
 /* ── STATS VIEW ───────────────────────────────── */
@@ -666,9 +827,6 @@ function render() {
         <span style="font-size:13px;color:#555">${dayLbl()}</span>
       </div>
       <div style="display:flex;gap:10px;align-items:center">
-        <button onclick="downloadData()" class="ghost-btn" style="font-size:12px">
-          <span>📊</span> Export
-        </button>
         ${userAvatar ? `<img src="${userAvatar}" style="width:32px;height:32px;border-radius:50%;border:2px solid #333" alt="Profile">` : ''}
         <div style="display:flex;flex-direction:column;align-items:flex-end">
           <span style="font-size:13px;color:#ccc">${esc(userName)}</span>
