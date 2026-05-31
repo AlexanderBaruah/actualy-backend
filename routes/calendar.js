@@ -301,6 +301,9 @@ router.post('/sync', authenticateUser, async (req, res) => {
     // RECONCILIATION: Delete events that were removed from Google Calendar
     console.log('[Calendar] Starting reconciliation to delete removed events...');
 
+    let deletedEvents = [];
+    let skippedDeletions = [];
+
     // Fetch all synced events within the window
     const { data: syncedEventsInWindow, error: fetchError } = await req.supabase
       .from('events')
@@ -312,15 +315,13 @@ router.post('/sync', authenticateUser, async (req, res) => {
 
     if (fetchError) {
       console.error('[Calendar] Error fetching synced events for reconciliation:', fetchError);
+      // Continue anyway - we can still return the synced events even if reconciliation failed
     } else {
       const eventsToDelete = syncedEventsInWindow.filter(
         e => e.google_calendar_event_id && !googleEventIds.has(e.google_calendar_event_id)
       );
 
       console.log('[Calendar] Found', eventsToDelete.length, 'events to potentially delete');
-
-      const deletedEvents = [];
-      const skippedDeletions = [];
 
       for (const event of eventsToDelete) {
         // Safety check: Check if event has any sessions
@@ -358,20 +359,21 @@ router.post('/sync', authenticateUser, async (req, res) => {
       }
 
       console.log('[Calendar] Reconciliation complete. Deleted:', deletedEvents.length, 'Skipped:', skippedDeletions.length);
-
-      res.json({
-        success: true,
-        synced: syncedEvents.length,
-        events: syncedEvents,
-        skipped: skippedEvents.length,
-        skippedDetails: skippedEvents,
-        deleted: deletedEvents.length,
-        deletedEvents: deletedEvents.map(e => ({ name: e.name, start_time: e.start_time })),
-        skippedDeletions: skippedDeletions.length,
-        skippedDeletionsDetails: skippedDeletions,
-        windowDays: SYNC_WINDOW_DAYS
-      });
     }
+
+    // Always send response (moved outside the else block)
+    res.json({
+      success: true,
+      synced: syncedEvents.length,
+      events: syncedEvents,
+      skipped: skippedEvents.length,
+      skippedDetails: skippedEvents,
+      deleted: deletedEvents.length,
+      deletedEvents: deletedEvents.map(e => ({ name: e.name, start_time: e.start_time })),
+      skippedDeletions: skippedDeletions.length,
+      skippedDeletionsDetails: skippedDeletions,
+      windowDays: SYNC_WINDOW_DAYS
+    });
 
   } catch (error) {
     console.error('Error syncing Google Calendar:', error);

@@ -276,16 +276,16 @@ router.get('/by-date', async (req, res) => {
 
     // Parse the date and get day boundaries in Pacific Time (UTC-7)
     const pacificOffset = -7 * 60; // Pacific Daylight Time offset in minutes
-    const targetDate = new Date(dateParam + 'T12:00:00'); // Use noon to avoid timezone issues
 
-    // Get start of day in Pacific Time
-    const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
-    const dayEnd = new Date(dayStart);
-    dayEnd.setDate(dayEnd.getDate() + 1);
+    // Parse YYYY-MM-DD and create start of day in Pacific Time
+    // Strategy: Parse as UTC, then subtract Pacific offset to get the equivalent Pacific midnight in UTC
+    const [year, month, day] = dateParam.split('-').map(Number);
+    const dayStartPacific = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    const dayEndPacific = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0));
 
-    // Convert to UTC for database query
-    const startUTC = new Date(dayStart.getTime() - (pacificOffset * 60 * 1000));
-    const endUTC = new Date(dayEnd.getTime() - (pacificOffset * 60 * 1000));
+    // Convert Pacific midnight to UTC (Pacific is UTC-7, so Pacific midnight = UTC 07:00)
+    const startUTC = new Date(dayStartPacific.getTime() - (pacificOffset * 60 * 1000));
+    const endUTC = new Date(dayEndPacific.getTime() - (pacificOffset * 60 * 1000));
 
     console.log('[Events] Fetching events for date:', dateParam, 'UTC range:', startUTC.toISOString(), 'to', endUTC.toISOString());
 
