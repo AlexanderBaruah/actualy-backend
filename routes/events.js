@@ -236,35 +236,10 @@ router.delete('/:id', async (req, res) => {
 });
 
 /**
- * GET /api/events/:id
- * Get a single event by ID
- */
-router.get('/:id', async (req, res) => {
-  try {
-    const eventId = req.params.id;
-
-    const { data, error } = await req.supabase
-      .from('events')
-      .select('*')
-      .eq('id', eventId)
-      .single();
-
-    if (error || !data) {
-      console.error('Error fetching event:', error);
-      return res.status(404).json({ error: 'Event not found' });
-    }
-
-    res.json({ event: data });
-  } catch (error) {
-    console.error('Error in GET /events/:id:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-/**
  * GET /api/events/by-date
  * Get events for a specific date
  * Query params: date (YYYY-MM-DD format)
+ * IMPORTANT: This route must come before /:id to avoid matching "by-date" as an ID
  */
 router.get('/by-date', async (req, res) => {
   try {
@@ -312,6 +287,7 @@ router.get('/by-date', async (req, res) => {
  * GET /api/events/range
  * Get events for a date range (for history view)
  * Query params: days (default 30) - number of days to fetch
+ * IMPORTANT: This route must come before /:id to avoid matching "range" as an ID
  */
 router.get('/range', async (req, res) => {
   try {
@@ -354,6 +330,34 @@ router.get('/range', async (req, res) => {
     res.json({ events, sessions });
   } catch (error) {
     console.error('Error in GET /events/range:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/events/:id
+ * Get a single event by ID
+ * IMPORTANT: This route must come AFTER all specific routes (/by-date, /range, etc.)
+ * to avoid matching specific route names as IDs
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const eventId = req.params.id;
+
+    const { data, error } = await req.supabase
+      .from('events')
+      .select('*')
+      .eq('id', eventId)
+      .single();
+
+    if (error || !data) {
+      console.error('Error fetching event:', error);
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    res.json({ event: data });
+  } catch (error) {
+    console.error('Error in GET /events/:id:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
