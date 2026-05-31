@@ -242,6 +242,7 @@ router.delete('/:id', async (req, res) => {
  * IMPORTANT: This route must come before /:id to avoid matching "by-date" as an ID
  */
 router.get('/by-date', async (req, res) => {
+  console.log('[events] HIT /by-date route, date:', req.query.date);
   try {
     const dateParam = req.query.date;
 
@@ -341,6 +342,7 @@ router.get('/range', async (req, res) => {
  * to avoid matching specific route names as IDs
  */
 router.get('/:id', async (req, res) => {
+  console.log('[events] HIT GET /:id route, id:', req.params.id);
   try {
     const eventId = req.params.id;
 
