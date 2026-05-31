@@ -3,6 +3,9 @@ const router = express.Router();
 const { google } = require('googleapis');
 const { authenticateUser } = require('../middleware/auth');
 
+// Configuration constants
+const SYNC_WINDOW_DAYS = 60; // Number of days ahead to sync from Google Calendar
+
 // OAuth2 client for incremental authorization
 // Note: This redirect URI must match exactly what's configured in Google Cloud Console
 const redirectUri = 'https://actualy-backend.vercel.app/api/calendar/oauth-callback';
@@ -175,7 +178,8 @@ router.get('/oauth-callback', async (req, res) => {
 
 /**
  * POST /api/calendar/sync
- * Sync today's events from Google Calendar
+ * Sync events from Google Calendar for the next SYNC_WINDOW_DAYS
+ * Expands recurring events and reconciles deletions
  * Uses calendar-specific OAuth token from incremental authorization
  */
 router.post('/sync', authenticateUser, async (req, res) => {
@@ -204,35 +208,38 @@ router.post('/sync', authenticateUser, async (req, res) => {
 
     const calendar = google.calendar({ version: 'v3', auth: calendarClient });
 
-    // Get today's date range in Pacific Time (UTC-7/UTC-8)
-    // Convert current UTC time to Pacific Time, then get start/end of day
+    // Get sync window date range in Pacific Time (UTC-7/UTC-8)
     const now = new Date();
     const pacificOffset = -7 * 60; // Pacific Daylight Time offset in minutes
     const localTime = new Date(now.getTime() + (pacificOffset * 60 * 1000));
 
     // Get start of today in Pacific Time
     const todayPacific = new Date(localTime.getFullYear(), localTime.getMonth(), localTime.getDate());
-    const tomorrowPacific = new Date(todayPacific);
-    tomorrowPacific.setDate(tomorrowPacific.getDate() + 1);
+    const endPacific = new Date(todayPacific);
+    endPacific.setDate(endPacific.getDate() + SYNC_WINDOW_DAYS);
 
-    // Convert back to UTC for the API query
-    const today = new Date(todayPacific.getTime() - (pacificOffset * 60 * 1000));
-    const tomorrow = new Date(tomorrowPacific.getTime() - (pacificOffset * 60 * 1000));
+    // Convert to UTC for the API query
+    const windowStart = new Date(todayPacific.getTime() - (pacificOffset * 60 * 1000));
+    const windowEnd = new Date(endPacific.getTime() - (pacificOffset * 60 * 1000));
 
-    console.log('[Calendar] Fetching events from', today.toISOString(), 'to', tomorrow.toISOString());
-    console.log('[Calendar] Pacific Time date:', todayPacific.toDateString());
+    console.log('[Calendar] Fetching events from', windowStart.toISOString(), 'to', windowEnd.toISOString());
+    console.log('[Calendar] Pacific Time range:', todayPacific.toDateString(), 'to', endPacific.toDateString());
+    console.log('[Calendar] Sync window:', SYNC_WINDOW_DAYS, 'days');
 
-    // Fetch today's events from Google Calendar
+    // Fetch events from Google Calendar with recurring events expanded
     const calendarResponse = await calendar.events.list({
       calendarId: 'primary',
-      timeMin: today.toISOString(),
-      timeMax: tomorrow.toISOString(),
-      singleEvents: true,
+      timeMin: windowStart.toISOString(),
+      timeMax: windowEnd.toISOString(),
+      singleEvents: true, // Expand recurring events into individual instances
       orderBy: 'startTime',
     });
 
     const googleEvents = calendarResponse.data.items || [];
     console.log('[Calendar] Found', googleEvents.length, 'total events from Google Calendar');
+
+    // Build set of Google Calendar event IDs for reconciliation
+    const googleEventIds = new Set(googleEvents.map(e => e.id).filter(id => id));
 
     const syncedEvents = [];
     const skippedEvents = [];
@@ -248,7 +255,7 @@ router.post('/sync', authenticateUser, async (req, res) => {
       // Skip all-day events or events without start/end times
       if (!gEvent.start?.dateTime || !gEvent.end?.dateTime) {
         console.log('[Calendar] Skipping event (no dateTime):', gEvent.summary);
-        skippedEvents.push({ name: gEvent.summary, reason: 'no dateTime' });
+        skippedEvents.push({ name: gEvent.summary, reason: 'no dateTime (all-day event)' });
         continue;
       }
 
@@ -291,16 +298,80 @@ router.post('/sync', authenticateUser, async (req, res) => {
       }
     }
 
-    console.log('[Calendar] Sync complete. Synced:', syncedEvents.length, 'Skipped:', skippedEvents.length);
-    console.log('[Calendar] Skipped events:', skippedEvents);
+    // RECONCILIATION: Delete events that were removed from Google Calendar
+    console.log('[Calendar] Starting reconciliation to delete removed events...');
 
-    res.json({
-      success: true,
-      synced: syncedEvents.length,
-      events: syncedEvents,
-      skipped: skippedEvents.length,
-      skippedDetails: skippedEvents
-    });
+    // Fetch all synced events within the window
+    const { data: syncedEventsInWindow, error: fetchError } = await req.supabase
+      .from('events')
+      .select('id, name, google_calendar_event_id, start_time')
+      .eq('user_id', req.user.id)
+      .eq('synced_from_calendar', true)
+      .gte('start_time', windowStart.toISOString())
+      .lt('start_time', windowEnd.toISOString());
+
+    if (fetchError) {
+      console.error('[Calendar] Error fetching synced events for reconciliation:', fetchError);
+    } else {
+      const eventsToDelete = syncedEventsInWindow.filter(
+        e => e.google_calendar_event_id && !googleEventIds.has(e.google_calendar_event_id)
+      );
+
+      console.log('[Calendar] Found', eventsToDelete.length, 'events to potentially delete');
+
+      const deletedEvents = [];
+      const skippedDeletions = [];
+
+      for (const event of eventsToDelete) {
+        // Safety check: Check if event has any sessions
+        const { data: sessions, error: sessionsError } = await req.supabase
+          .from('sessions')
+          .select('id')
+          .eq('event_id', event.id)
+          .limit(1);
+
+        if (sessionsError) {
+          console.error('[Calendar] Error checking sessions for event:', event.name, sessionsError);
+          skippedDeletions.push({ name: event.name, reason: 'error checking sessions' });
+          continue;
+        }
+
+        if (sessions && sessions.length > 0) {
+          console.log('[Calendar] Skipping deletion - event has sessions:', event.name);
+          skippedDeletions.push({ name: event.name, reason: 'has tracked sessions' });
+          continue;
+        }
+
+        // Safe to delete - event was removed from Google Calendar and has no sessions
+        console.log('[Calendar] Deleting event removed from Google Calendar:', event.name);
+        const { error: deleteError } = await req.supabase
+          .from('events')
+          .delete()
+          .eq('id', event.id);
+
+        if (deleteError) {
+          console.error('[Calendar] Error deleting event:', event.name, deleteError);
+          skippedDeletions.push({ name: event.name, reason: `delete error: ${deleteError.message}` });
+        } else {
+          deletedEvents.push(event);
+        }
+      }
+
+      console.log('[Calendar] Reconciliation complete. Deleted:', deletedEvents.length, 'Skipped:', skippedDeletions.length);
+
+      res.json({
+        success: true,
+        synced: syncedEvents.length,
+        events: syncedEvents,
+        skipped: skippedEvents.length,
+        skippedDetails: skippedEvents,
+        deleted: deletedEvents.length,
+        deletedEvents: deletedEvents.map(e => ({ name: e.name, start_time: e.start_time })),
+        skippedDeletions: skippedDeletions.length,
+        skippedDeletionsDetails: skippedDeletions,
+        windowDays: SYNC_WINDOW_DAYS
+      });
+    }
 
   } catch (error) {
     console.error('Error syncing Google Calendar:', error);

@@ -933,9 +933,17 @@ function rPlanned() {
       </div>
     `}
 
-    <button onclick="openModalForPlanned()" class="pbtn" style="width:100%;padding:14px;font-size:15px;margin-top:12px">
-      + Add event
-    </button>
+    <div style="display:flex;gap:10px;margin-top:12px">
+      <button onclick="syncGoogleCalendar()" class="ghost-btn" style="flex:0 0 auto;padding:12px 16px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M16 2v4M8 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/>
+        </svg>
+        Sync Calendar
+      </button>
+      <button onclick="openModalForPlanned()" class="pbtn" style="flex:1;padding:14px;font-size:15px">
+        + Add event
+      </button>
+    </div>
   `;
 }
 
@@ -1663,8 +1671,25 @@ window.syncGoogleCalendar = async function() {
     const result = await apiCall('POST', '/api/calendar/sync');
 
     if (result.success) {
-      alert(`Successfully synced ${result.synced} event(s) from Google Calendar!`);
-      await loadTodaysEvents();
+      // Build success message with sync details
+      let message = `Successfully synced ${result.synced} event(s) from Google Calendar!`;
+      if (result.deleted > 0) {
+        message += `\n${result.deleted} removed event(s) deleted.`;
+      }
+      if (result.skippedDeletions > 0) {
+        message += `\n${result.skippedDeletions} event(s) with tracked sessions preserved.`;
+      }
+      message += `\n\nSync window: ${result.windowDays} days ahead.`;
+
+      alert(message);
+
+      // Reload events based on current tab
+      if (S.tab === 'today' || S.tab === 'track') {
+        await loadTodaysEvents();
+      } else if (S.tab === 'planned') {
+        await loadPlannedEvents();
+      }
+
       render();
     }
   } catch (error) {
@@ -1730,8 +1755,22 @@ window.confirmGcalConnect = async function() {
         try {
           const syncResult = await apiCall('POST', '/api/calendar/sync');
           if (syncResult.success) {
-            alert(`Successfully synced ${syncResult.synced} event(s) from Google Calendar!`);
-            await loadTodaysEvents();
+            // Build success message with sync details
+            let message = `Successfully synced ${syncResult.synced} event(s) from Google Calendar!`;
+            if (syncResult.deleted > 0) {
+              message += `\n${syncResult.deleted} removed event(s) deleted.`;
+            }
+            message += `\n\nSync window: ${syncResult.windowDays} days ahead.`;
+
+            alert(message);
+
+            // Reload events based on current tab
+            if (S.tab === 'today' || S.tab === 'track') {
+              await loadTodaysEvents();
+            } else if (S.tab === 'planned') {
+              await loadPlannedEvents();
+            }
+
             render();
           }
         } catch (syncError) {
