@@ -1757,14 +1757,19 @@ window.confirmGcalConnect = async function() {
         try {
           const syncResult = await apiCall('POST', '/api/calendar/sync');
           if (syncResult.success) {
-            // Build success message with sync details
-            let message = `Successfully synced ${syncResult.synced} event(s) from Google Calendar!`;
-            if (syncResult.deleted > 0) {
-              message += `\n${syncResult.deleted} removed event(s) deleted.`;
-            }
-            message += `\n\nSync window: ${syncResult.windowDays} days ahead.`;
+            // Build detailed diagnostic message
+            let message = `Google Calendar Sync Complete\n\n`;
+            message += `📥 Fetched from Google: ${syncResult.googleFetchedCount || 0}\n`;
+            message += `➕ New events inserted: ${syncResult.insertedCount || 0}\n`;
+            message += `⏭️  Already existed (skipped): ${syncResult.existingSkippedCount || 0}\n`;
+            message += `🗑️  Deleted from Actualy: ${syncResult.deletedCount || 0}\n`;
+            message += `🔒 Preserved (has sessions): ${syncResult.skippedDeletionCount || 0}\n`;
+            message += `📊 Total in DB (within ${syncResult.windowDays || 60} days): ${syncResult.dbSyncedEventCount || 0}`;
 
             alert(message);
+
+            // Also log to console for debugging
+            console.log('[Sync] Full response:', syncResult);
 
             // Reload events based on current tab
             if (S.tab === 'today' || S.tab === 'track') {
