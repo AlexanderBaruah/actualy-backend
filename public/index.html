@@ -863,6 +863,8 @@ window.exportSelectedDays = function() {
 
 /* ── PLANNED VIEW ─────────────────────────────── */
 function rPlanned() {
+  console.log('[Planned] Rendering - weekStart:', S.plannedWeekStart, 'selectedDate:', S.plannedSelectedDate, 'events:', S.plannedEvents?.length || 0);
+
   if (!S.plannedWeekStart || !S.plannedSelectedDate) {
     return '<div style="text-align:center;margin-top:60px;color:#666">Loading...</div>';
   }
@@ -1055,12 +1057,33 @@ async function loadHistoryData() {
 }
 
 async function loadPlannedEvents() {
-  if (!S.plannedSelectedDate) return;
+  if (!S.plannedSelectedDate) {
+    console.log('[Planned] No selected date, skipping load');
+    return;
+  }
+
+  console.log('[Planned] Loading events for date:', S.plannedSelectedDate);
+
   try {
-    const data = await apiCall('GET', `/api/events/by-date?date=${S.plannedSelectedDate}`);
+    const url = `/api/events/by-date?date=${S.plannedSelectedDate}`;
+    console.log('[Planned] Fetching:', url);
+
+    const data = await apiCall('GET', url);
+    console.log('[Planned] API response:', data);
+    console.log('[Planned] Events received:', data.events?.length || 0);
+
     S.plannedEvents = data.events || [];
+
+    if (S.plannedEvents.length > 0) {
+      console.log('[Planned] Event details:');
+      S.plannedEvents.forEach((evt, i) => {
+        console.log(`  ${i + 1}. ${evt.name} - ${evt.start_time} (synced: ${evt.synced_from_calendar})`);
+      });
+    } else {
+      console.log('[Planned] No events found for', S.plannedSelectedDate);
+    }
   } catch (error) {
-    console.error('Failed to load planned events:', error);
+    console.error('[Planned] Failed to load planned events:', error);
     S.plannedEvents = [];
   }
 }
