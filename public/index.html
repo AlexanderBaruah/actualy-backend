@@ -926,8 +926,6 @@ function rPlanned() {
                 <button class="dot-btn" onclick="togglePlannedMenu('${e.id}')">⋮</button>
                 <div id="planned-menu-${e.id}" class="dropdown" style="display:none">
                   <button class="drop-item" onclick="editPlannedEvent('${e.id}')">✏️ Edit event</button>
-                  <button class="drop-item" onclick="addNotePlanned('${e.id}')">📝 Add note</button>
-                  <div class="drop-divider"></div>
                   <button class="drop-item danger" onclick="removePlannedEvent('${e.id}', ${e.recurrence_group_id ? 'true' : 'false'})">🗑️ Delete event</button>
                 </div>
               </div>
@@ -1492,14 +1490,6 @@ window.editPlannedEvent = async function(id) {
     console.error('Failed to fetch event:', err);
     alert('Failed to load event details');
   }
-};
-
-window.addNotePlanned = function(id) {
-  // Close menu
-  document.getElementById(`planned-menu-${id}`).style.display = 'none';
-
-  // For now, show alert. Full note functionality would need session context
-  alert('Note functionality is available when tracking time in the Track tab');
 };
 
 window.removePlannedEvent = function(id, isRecurring) {
