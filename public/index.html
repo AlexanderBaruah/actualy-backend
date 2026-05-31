@@ -248,6 +248,26 @@
   </div>
 </div>
 
+<!-- UNPLANNED TASK MODAL -->
+<div id="unplanned-modal" class="overlay">
+  <div class="modal-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:22px">
+      <span style="font-size:17px;font-weight:600">Start unplanned task</span>
+      <button onclick="closeUnplannedModal()" style="background:none;border:none;color:#666;cursor:pointer;font-size:26px;line-height:1;padding:0 4px">×</button>
+    </div>
+    <label class="mlabel">Task name</label>
+    <input id="unplanned-name" class="minput" type="text" placeholder="e.g. Bug fix, Client call"
+      style="margin-bottom:4px" oninput="document.getElementById('unplanned-err').textContent=''">
+    <div id="unplanned-err" class="merr"></div>
+    <label class="mlabel" style="margin-top:16px;margin-bottom:10px">Color (optional)</label>
+    <div id="unplanned-color-swatches" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px"></div>
+    <div style="display:flex;gap:10px">
+      <button class="mbtn-cancel" onclick="closeUnplannedModal()">Cancel</button>
+      <button class="mbtn-save" onclick="startUnplannedTask()">Start tracking</button>
+    </div>
+  </div>
+</div>
+
 <!-- GOOGLE CALENDAR CONNECT MODAL -->
 <div id="gcal-connect-modal" class="overlay">
   <div class="modal-box" style="max-width:420px">
@@ -553,6 +573,9 @@ function rToday() {
 /* ── TRACK VIEW ───────────────────────────────── */
 function rTrack() {
   return `
+    <button onclick="openUnplannedTaskModal()" class="pbtn" style="width:100%;padding:14px;font-size:15px;border-radius:10px;margin-bottom:18px;background:#0f9d8b;color:white;border:none">
+      + Start unplanned task
+    </button>
     <p style="font-size:14px;color:#555;margin-bottom:18px">Tap an event to begin tracking</p>
     ${EVS.map(e => {
       const isA  = S.active?.id === e.id;
@@ -945,7 +968,7 @@ function rPlanned() {
         </svg>
         Sync Calendar
       </button>
-      <button onclick="openModalForPlanned()" class="pbtn" style="flex:1;padding:14px;font-size:15px">
+      <button onclick="openModalForPlanned()" class="pbtn" style="flex:1;padding:14px;font-size:15px;border-radius:10px">
         + Add event
       </button>
     </div>
@@ -1371,6 +1394,89 @@ document.getElementById('modal').addEventListener('click', e => {
 
 document.getElementById('delete-recurring-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('delete-recurring-modal')) closeDeleteRecurringModal();
+});
+
+/* ── UNPLANNED TASK MODAL ─────────────────────── */
+let unplannedColor = 0;
+
+window.openUnplannedTaskModal = function() {
+  unplannedColor = 0;
+  document.getElementById('unplanned-name').value = '';
+  document.getElementById('unplanned-err').textContent = '';
+  document.getElementById('unplanned-color-swatches').innerHTML = COLORS.map((c, i) =>
+    `<div class="swatch ${i===0?'picked':''}" style="background:${c.bdr}" onclick="pickUnplannedColor(${i})" id="upsw${i}"></div>`
+  ).join('');
+  document.getElementById('unplanned-modal').classList.add('open');
+  setTimeout(() => document.getElementById('unplanned-name').focus(), 60);
+};
+
+window.closeUnplannedModal = function() {
+  document.getElementById('unplanned-modal').classList.remove('open');
+};
+
+window.pickUnplannedColor = function(i) {
+  document.querySelectorAll('#unplanned-color-swatches .swatch').forEach((s, j) => s.classList.toggle('picked', j === i));
+  unplannedColor = i;
+};
+
+window.startUnplannedTask = async function() {
+  const name = document.getElementById('unplanned-name').value.trim();
+  const err = document.getElementById('unplanned-err');
+
+  if (!name) {
+    err.textContent = 'Please enter a task name.';
+    return;
+  }
+
+  const c = COLORS[unplannedColor];
+  const now = new Date();
+
+  // Set start time to current time (rounded to nearest minute)
+  const startTime = new Date(now);
+  startTime.setSeconds(0, 0);
+
+  // Set end time 1 hour from now as a placeholder
+  const endTime = new Date(startTime);
+  endTime.setHours(endTime.getHours() + 1);
+
+  // Save to backend
+  try {
+    const eventData = await apiCall('POST', '/api/events', {
+      name,
+      start_time: startTime.toISOString(),
+      end_time: endTime.toISOString(),
+      color: c.bdr
+    });
+
+    const sh = startTime.getHours();
+    const sm = startTime.getMinutes();
+    const eh = endTime.getHours();
+    const em = endTime.getMinutes();
+
+    // Add to EVS array
+    EVS.push({
+      id: eventData.event.id,
+      n: name,
+      sh, sm, eh, em,
+      fill: c.fill,
+      bdr: c.bdr,
+      bar: c.bar
+    });
+    EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
+
+    closeUnplannedModal();
+    render();
+
+    // Immediately start tracking
+    await tog(eventData.event.id);
+  } catch (error) {
+    console.error('Failed to create unplanned task:', error);
+    err.textContent = 'Failed to create task. Please try again.';
+  }
+};
+
+document.getElementById('unplanned-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('unplanned-modal')) closeUnplannedModal();
 });
 
 /* ── PLANNED TAB FUNCTIONS ────────────────────── */
