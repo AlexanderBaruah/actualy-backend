@@ -1,7 +1,7 @@
 // Service Worker for Actualy PWA
 // Simple cache-first strategy for fast loading
 
-const CACHE_NAME = 'actualy-v1';
+const CACHE_NAME = 'actualy-v2';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -37,14 +37,20 @@ self.addEventListener('activate', event => {
 
 // Fetch event - serve from cache, fallback to network
 self.addEventListener('fetch', event => {
+  // NEVER cache API requests - always fetch from network
+  if (event.request.url.includes('/api/')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  // For non-API requests, use cache-first strategy
   event.respondWith(
     caches.match(event.request)
       .then(response => {
         // Return cached version or fetch from network
         return response || fetch(event.request).then(fetchResponse => {
-          // Don't cache API calls or external resources
-          if (!event.request.url.startsWith(self.location.origin) ||
-              event.request.url.includes('/api/')) {
+          // Don't cache external resources
+          if (!event.request.url.startsWith(self.location.origin)) {
             return fetchResponse;
           }
 
