@@ -66,24 +66,78 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: name, start_time, end_time' });
     }
 
-    const { data, error } = await req.supabase
-      .from('events')
-      .insert({
-        user_id: req.user.id,
-        name,
-        start_time,
-        end_time,
-        color: color || '#3b82f6'
-      })
-      .select()
-      .single();
+    const { is_recurring, repeat_until } = req.body;
 
-    if (error) {
-      console.error('Error creating event:', error);
-      return res.status(500).json({ error: 'Failed to create event' });
+    // If not recurring, create single event
+    if (!is_recurring || !repeat_until) {
+      const { data, error } = await req.supabase
+        .from('events')
+        .insert({
+          user_id: req.user.id,
+          name,
+          start_time,
+          end_time,
+          color: color || '#3b82f6'
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error creating event:', error);
+        return res.status(500).json({ error: 'Failed to create event' });
+      }
+
+      return res.status(201).json({ event: data });
     }
 
-    res.status(201).json({ event: data });
+    // Create recurring events
+    const { randomUUID } = require('crypto');
+    const recurrenceGroupId = randomUUID();
+
+    const startDate = new Date(start_time);
+    const endDate = new Date(end_time);
+    const repeatUntilDate = new Date(repeat_until);
+
+    // Calculate duration in milliseconds
+    const duration = endDate.getTime() - startDate.getTime();
+
+    // Generate weekly occurrences
+    const eventsToCreate = [];
+    let currentDate = new Date(startDate);
+
+    while (currentDate <= repeatUntilDate) {
+      const eventStart = new Date(currentDate);
+      const eventEnd = new Date(currentDate.getTime() + duration);
+
+      eventsToCreate.push({
+        user_id: req.user.id,
+        name,
+        start_time: eventStart.toISOString(),
+        end_time: eventEnd.toISOString(),
+        color: color || '#3b82f6',
+        recurrence_group_id: recurrenceGroupId
+      });
+
+      // Move to next week
+      currentDate.setDate(currentDate.getDate() + 7);
+    }
+
+    // Bulk insert all recurring events
+    const { data, error } = await req.supabase
+      .from('events')
+      .insert(eventsToCreate)
+      .select();
+
+    if (error) {
+      console.error('Error creating recurring events:', error);
+      return res.status(500).json({ error: 'Failed to create recurring events' });
+    }
+
+    res.status(201).json({
+      events: data,
+      recurrence_group_id: recurrenceGroupId,
+      count: data.length
+    });
   } catch (error) {
     console.error('Error in POST /events:', error);
     res.status(500).json({ error: 'Server error' });
@@ -127,25 +181,129 @@ router.patch('/:id', async (req, res) => {
 
 /**
  * DELETE /api/events/:id
- * Delete an event by ID
+ * Delete an event by ID (with recurring support)
+ * Query params: delete_mode ('single' | 'future') - for recurring events
  */
 router.delete('/:id', async (req, res) => {
   try {
     const eventId = req.params.id;
+    const deleteMode = req.query.delete_mode || 'single';
 
+    // Get the event to check if it's part of a recurring series
+    const { data: event, error: fetchError } = await req.supabase
+      .from('events')
+      .select('*')
+      .eq('id', eventId)
+      .single();
+
+    if (fetchError || !event) {
+      console.error('Error fetching event:', fetchError);
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    // If not part of recurring series or delete_mode is 'single', just delete this event
+    if (!event.recurrence_group_id || deleteMode === 'single') {
+      const { error } = await req.supabase
+        .from('events')
+        .delete()
+        .eq('id', eventId);
+
+      if (error) {
+        console.error('Error deleting event:', error);
+        return res.status(500).json({ error: 'Failed to delete event' });
+      }
+
+      return res.json({ message: 'Event deleted successfully', deleted: 1 });
+    }
+
+    // Delete this event and all future occurrences in the series
     const { error } = await req.supabase
       .from('events')
       .delete()
-      .eq('id', eventId);
+      .eq('recurrence_group_id', event.recurrence_group_id)
+      .gte('start_time', event.start_time);
 
     if (error) {
-      console.error('Error deleting event:', error);
-      return res.status(500).json({ error: 'Failed to delete event' });
+      console.error('Error deleting recurring events:', error);
+      return res.status(500).json({ error: 'Failed to delete recurring events' });
     }
 
-    res.json({ message: 'Event deleted successfully' });
+    res.json({ message: 'Recurring events deleted successfully', deleted: 'multiple' });
   } catch (error) {
     console.error('Error in DELETE /events/:id:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/events/:id
+ * Get a single event by ID
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const eventId = req.params.id;
+
+    const { data, error } = await req.supabase
+      .from('events')
+      .select('*')
+      .eq('id', eventId)
+      .single();
+
+    if (error || !data) {
+      console.error('Error fetching event:', error);
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    res.json({ event: data });
+  } catch (error) {
+    console.error('Error in GET /events/:id:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/events/by-date
+ * Get events for a specific date
+ * Query params: date (YYYY-MM-DD format)
+ */
+router.get('/by-date', async (req, res) => {
+  try {
+    const dateParam = req.query.date;
+
+    if (!dateParam) {
+      return res.status(400).json({ error: 'Missing required parameter: date (YYYY-MM-DD)' });
+    }
+
+    // Parse the date and get day boundaries in Pacific Time (UTC-7)
+    const pacificOffset = -7 * 60; // Pacific Daylight Time offset in minutes
+    const targetDate = new Date(dateParam + 'T12:00:00'); // Use noon to avoid timezone issues
+
+    // Get start of day in Pacific Time
+    const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    // Convert to UTC for database query
+    const startUTC = new Date(dayStart.getTime() - (pacificOffset * 60 * 1000));
+    const endUTC = new Date(dayEnd.getTime() - (pacificOffset * 60 * 1000));
+
+    console.log('[Events] Fetching events for date:', dateParam, 'UTC range:', startUTC.toISOString(), 'to', endUTC.toISOString());
+
+    const { data, error } = await req.supabase
+      .from('events')
+      .select('*')
+      .gte('start_time', startUTC.toISOString())
+      .lt('start_time', endUTC.toISOString())
+      .order('start_time', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching events by date:', error);
+      return res.status(500).json({ error: 'Failed to fetch events' });
+    }
+
+    res.json({ events: data });
+  } catch (error) {
+    console.error('Error in GET /events/by-date:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });

@@ -124,6 +124,23 @@
     #app { padding-bottom: max(80px, calc(80px + env(safe-area-inset-bottom))); }
     .export-floating { bottom: max(20px, calc(20px + env(safe-area-inset-bottom))); }
   }
+
+  /* Planned tab week selector */
+  .week-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .week-arrow { background: transparent; border: 1px solid #333; border-radius: 8px; color: #aaa; padding: 8px 12px; cursor: pointer; font-size: 16px; font-family: inherit; transition: all .15s; }
+  .week-arrow:hover { background: #222; color: #fff; border-color: #555; }
+  .week-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; flex: 1; margin: 0 16px; }
+  .week-day { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 10px 8px; text-align: center; cursor: pointer; transition: all .2s; }
+  .week-day:hover { background: #222; border-color: #444; }
+  .week-day.selected { background: #0f9d8b; border-color: #0f9d8b; }
+  .week-day-label { font-size: 11px; color: #666; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 4px; text-transform: uppercase; }
+  .week-day.selected .week-day-label { color: #fff; }
+  .week-day-num { font-size: 18px; font-weight: 600; color: #fff; }
+  .jump-date-btn { background: transparent; border: 1px solid #333; border-radius: 8px; color: #aaa; padding: 8px 14px; cursor: pointer; font-size: 13px; font-family: inherit; display: flex; align-items: center; gap: 6px; transition: all .15s; }
+  .jump-date-btn:hover { background: #222; color: #fff; border-color: #555; }
+  .planned-event { background: #1a1a1a; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; border-left: 4px solid #3b82f6; }
+  .planned-event-name { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .planned-event-time { font-size: 13px; color: #999; }
 </style>
 </head>
 <body>
@@ -163,7 +180,17 @@
       </div>
     </div>
     <label class="mlabel" style="margin-bottom:10px">Color</label>
-    <div id="color-swatches" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:28px"></div>
+    <div id="color-swatches" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px"></div>
+    <div style="margin-bottom:20px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;color:#ccc">
+        <input type="checkbox" id="evt-recurring" onchange="toggleRecurringFields()" style="width:18px;height:18px;cursor:pointer;accent-color:#0f9d8b">
+        Repeat weekly
+      </label>
+      <div id="recurring-fields" style="display:none;margin-top:12px">
+        <label class="mlabel">Repeat until</label>
+        <input id="evt-repeat-until" class="minput" type="date">
+      </div>
+    </div>
     <div style="display:flex;gap:10px">
       <button class="mbtn-cancel" onclick="closeModal()">Cancel</button>
       <button class="mbtn-save" onclick="addEvent()">Add event</button>
@@ -238,6 +265,30 @@
   </div>
 </div>
 
+<!-- DELETE RECURRING EVENT MODAL -->
+<div id="delete-recurring-modal" class="overlay">
+  <div class="modal-box" style="max-width:460px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="font-size:17px;font-weight:600">Delete recurring event</span>
+      <button onclick="closeDeleteRecurringModal()" style="background:none;border:none;color:#666;cursor:pointer;font-size:26px;line-height:1;padding:0 4px">×</button>
+    </div>
+    <p style="font-size:14px;color:#999;line-height:1.5;margin-bottom:24px">
+      This is part of a recurring event series. What would you like to delete?
+    </p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="pbtn" onclick="deleteThisOnly()" style="padding:14px;font-size:14px;background:#1a1a1a;border:1px solid #333;color:#fff">
+        Delete this event only
+      </button>
+      <button class="pbtn" onclick="deleteThisAndFuture()" style="padding:14px;font-size:14px;background:#ef4444;border:1px solid #ef4444;color:#fff">
+        Delete this and all future occurrences
+      </button>
+      <button class="mbtn-cancel" onclick="closeDeleteRecurringModal()" style="margin-top:6px">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
+
 <script>
 // Initialize Supabase
 const SUPABASE_URL = 'https://kodxtnmprtlbsafxizrw.supabase.co';
@@ -282,6 +333,11 @@ const S = {
   selectedDays: new Set(), // Set of selected date keys for export
   dateRangeStart: '', // Start date for range picker
   dateRangeEnd: '', // End date for range picker
+  // Planned tab state
+  plannedSelectedDate: null, // Selected date in YYYY-MM-DD format
+  plannedWeekStart: null, // First day of the displayed week
+  plannedEvents: [], // Events for the selected date
+  plannedDate: null, // Date object for Add Event modal
 };
 
 /* ── AUTH & API ────────────────────────────────── */
@@ -805,6 +861,84 @@ window.exportSelectedDays = function() {
   XLSX.writeFile(wb, filename);
 };
 
+/* ── PLANNED VIEW ─────────────────────────────── */
+function rPlanned() {
+  if (!S.plannedWeekStart || !S.plannedSelectedDate) {
+    return '<div style="text-align:center;margin-top:60px;color:#666">Loading...</div>';
+  }
+
+  // Generate 7 days (Mon-Sun) starting from week start
+  const weekStart = new Date(S.plannedWeekStart + 'T12:00:00');
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    const dateStr = d.toISOString().split('T')[0];
+    const dayLabel = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i];
+    const dayNum = d.getDate();
+    const isSelected = dateStr === S.plannedSelectedDate;
+    days.push({ dateStr, dayLabel, dayNum, isSelected });
+  }
+
+  // Get selected date info
+  const selectedDate = new Date(S.plannedSelectedDate + 'T12:00:00');
+  const selectedDateLabel = selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+  return `
+    <div class="week-nav">
+      <button class="week-arrow" onclick="changeWeek(-1)">←</button>
+      <div class="week-days">
+        ${days.map(d => `
+          <div class="week-day ${d.isSelected ? 'selected' : ''}" onclick="selectPlannedDay('${d.dateStr}')">
+            <div class="week-day-label">${d.dayLabel}</div>
+            <div class="week-day-num">${d.dayNum}</div>
+          </div>
+        `).join('')}
+      </div>
+      <button class="week-arrow" onclick="changeWeek(1)">→</button>
+      <button class="jump-date-btn" onclick="openJumpToDate()">
+        <span>📅</span>
+        <span>Jump to date</span>
+      </button>
+    </div>
+
+    <div style="margin-bottom:16px;font-size:14px;color:#999;text-align:center">${selectedDateLabel}</div>
+
+    ${S.plannedEvents.length === 0 ? `
+      <div style="text-align:center;margin-top:40px;color:#666">
+        <div style="font-size:15px">No events planned for this day</div>
+        <div style="font-size:13px;margin-top:6px">Click "+ Add event" to plan your day</div>
+      </div>
+    ` : `
+      <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+        ${S.plannedEvents.map(e => {
+          const start = new Date(e.start_time);
+          const end = new Date(e.end_time);
+          const startStr = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+          const endStr = end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+          const duration = Math.floor((end - start) / 60000);
+          return `<div class="planned-event" style="border-left-color:${e.color}">
+            <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:6px">
+              <div class="planned-event-name">${esc(e.name)}</div>
+              <button onclick="removePlannedEvent('${e.id}', ${e.recurrence_group_id ? 'true' : 'false'})"
+                style="background:transparent;border:1px solid #333;border-radius:6px;color:#999;padding:4px 10px;cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s">
+                Delete
+              </button>
+            </div>
+            <div class="planned-event-time">${startStr} - ${endStr} (${fdur(duration)})</div>
+            ${e.synced_from_calendar ? `<div style="font-size:11px;color:#666;margin-top:4px;display:flex;align-items:center;gap:4px">📅 Google Calendar</div>` : ''}
+            ${e.recurrence_group_id ? `<div style="font-size:11px;color:#0f9d8b;margin-top:4px">🔄 Recurring event</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    `}
+
+    <button onclick="openModalForPlanned()" class="pbtn" style="width:100%;padding:14px;font-size:15px;margin-top:12px">
+      + Add event
+    </button>
+  `;
+}
+
 /* ── STATS VIEW ───────────────────────────────── */
 function rStats() {
   const tp = EVS.reduce((s, e) => s + dur(e), 0);
@@ -872,11 +1006,11 @@ function render() {
       </div>
     </div>
     <div class="tabs">
-      ${['today','track','history','stats'].map(t =>
+      ${['today','track','planned','history','stats'].map(t =>
         `<button class="tab ${S.tab===t?'on':''}" onclick="sw('${t}')">${t}</button>`
       ).join('')}
     </div>
-    <div>${S.tab==='today' ? rToday() : S.tab==='track' ? rTrack() : S.tab==='history' ? rHistory() : rStats()}</div>`;
+    <div>${S.tab==='today' ? rToday() : S.tab==='track' ? rTrack() : S.tab==='planned' ? rPlanned() : S.tab==='history' ? rHistory() : rStats()}</div>`;
 }
 
 /* ── TAB & TIMER ──────────────────────────────── */
@@ -885,6 +1019,20 @@ window.sw = async t => {
   S.openMenu = null;
   if (t === 'history' && !S.historyData) {
     await loadHistoryData();
+  }
+  if (t === 'planned') {
+    // Initialize planned tab to today's week if not set
+    if (!S.plannedSelectedDate) {
+      const today = new Date();
+      S.plannedSelectedDate = today.toISOString().split('T')[0];
+      // Set week start to Monday of current week
+      const dayOfWeek = today.getDay();
+      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // 0=Sun, adjust to Mon
+      const monday = new Date(today);
+      monday.setDate(today.getDate() + diff);
+      S.plannedWeekStart = monday.toISOString().split('T')[0];
+    }
+    await loadPlannedEvents();
   }
   render();
 };
@@ -895,6 +1043,17 @@ async function loadHistoryData() {
     S.historyData = data;
   } catch (error) {
     console.error('Failed to load history:', error);
+  }
+}
+
+async function loadPlannedEvents() {
+  if (!S.plannedSelectedDate) return;
+  try {
+    const data = await apiCall('GET', `/api/events/by-date?date=${S.plannedSelectedDate}`);
+    S.plannedEvents = data.events || [];
+  } catch (error) {
+    console.error('Failed to load planned events:', error);
+    S.plannedEvents = [];
   }
 }
 
@@ -964,11 +1123,29 @@ document.addEventListener('click', () => {
 
 /* ── REMOVE EVENT ─────────────────────────────── */
 window.removeEvent = async function(id) {
+  // Check if this is a recurring event
+  const event = EVS.find(e => e.id === id);
+
+  // For today tab, we need to fetch event details to check if recurring
+  try {
+    const eventDetails = await apiCall('GET', `/api/events/${id}`);
+    if (eventDetails.event?.recurrence_group_id) {
+      // This is a recurring event - show modal
+      S.deleteEventId = id;
+      S.openMenu = null;
+      document.getElementById('delete-recurring-modal').classList.add('open');
+      return;
+    }
+  } catch (err) {
+    console.error('Failed to fetch event details:', err);
+  }
+
+  // Non-recurring event - simple delete with confirmation
   if (!confirm(`Remove this event? This can't be undone.`)) return;
 
   // Delete from backend
   try {
-    await apiCall('DELETE', `/api/events/${id}`);
+    await apiCall('DELETE', `/api/events/${id}?delete_mode=single`);
   } catch (err) {
     console.error('Failed to delete event:', err);
     alert('Failed to delete event. Please try again.');
@@ -1054,6 +1231,11 @@ window.openModal = function() {
 
 window.closeModal = function() {
   document.getElementById('modal').classList.remove('open');
+  // Reset recurring fields
+  document.getElementById('evt-recurring').checked = false;
+  document.getElementById('recurring-fields').style.display = 'none';
+  document.getElementById('evt-repeat-until').value = '';
+  S.plannedDate = null;
 };
 
 window.pickColor = function(i) {
@@ -1074,30 +1256,71 @@ window.addEvent = async function() {
 
   const c = COLORS[pickedColor];
 
-  // Create start and end datetime for today
-  const today = new Date();
-  const startTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), sh, sm);
-  const endTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), eh, em);
+  // Check if recurring
+  const isRecurring = document.getElementById('evt-recurring').checked;
+  const repeatUntil = document.getElementById('evt-repeat-until').value;
+
+  if (isRecurring && !repeatUntil) {
+    err.textContent = 'Please set a repeat until date.';
+    return;
+  }
+
+  // Use planned date if set (from planned tab), otherwise use today
+  const targetDate = S.plannedDate ? new Date(S.plannedDate + 'T12:00:00') : new Date();
+  const startTime = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), sh, sm);
+  const endTime = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), eh, em);
 
   // Save to backend
   try {
-    const eventData = await apiCall('POST', '/api/events', {
+    const payload = {
       name,
       start_time: startTime.toISOString(),
       end_time: endTime.toISOString(),
       color: c.bdr
-    });
+    };
 
-    // Add to local array with backend ID
-    EVS.push({
-      id: eventData.event.id,
-      n: name,
-      sh, sm, eh, em,
-      fill: c.fill,
-      bdr: c.bdr,
-      bar: c.bar
-    });
-    EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
+    if (isRecurring) {
+      payload.is_recurring = true;
+      payload.repeat_until = repeatUntil + 'T23:59:59';
+    }
+
+    const eventData = await apiCall('POST', '/api/events', payload);
+
+    // If on today tab and adding to today, update EVS
+    if (!S.plannedDate || S.plannedDate === new Date().toISOString().split('T')[0]) {
+      if (eventData.events) {
+        // Multiple recurring events - only add today's ones to EVS
+        const todayStr = new Date().toISOString().split('T')[0];
+        eventData.events.forEach(e => {
+          if (new Date(e.start_time).toISOString().split('T')[0] === todayStr) {
+            EVS.push({
+              id: e.id,
+              n: name,
+              sh, sm, eh, em,
+              fill: c.fill,
+              bdr: c.bdr,
+              bar: c.bar
+            });
+          }
+        });
+      } else {
+        // Single event
+        EVS.push({
+          id: eventData.event.id,
+          n: name,
+          sh, sm, eh, em,
+          fill: c.fill,
+          bdr: c.bdr,
+          bar: c.bar
+        });
+      }
+      EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
+    }
+
+    // If on planned tab, reload planned events
+    if (S.tab === 'planned') {
+      await loadPlannedEvents();
+    }
   } catch (error) {
     console.error('Failed to create event:', error);
     err.textContent = 'Failed to create event. Please try again.';
@@ -1111,6 +1334,122 @@ window.addEvent = async function() {
 document.getElementById('modal').addEventListener('click', e => {
   if (e.target === document.getElementById('modal')) closeModal();
 });
+
+document.getElementById('delete-recurring-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('delete-recurring-modal')) closeDeleteRecurringModal();
+});
+
+/* ── PLANNED TAB FUNCTIONS ────────────────────── */
+window.toggleRecurringFields = function() {
+  const checked = document.getElementById('evt-recurring').checked;
+  document.getElementById('recurring-fields').style.display = checked ? 'block' : 'none';
+};
+
+window.openModalForPlanned = function() {
+  S.plannedDate = S.plannedSelectedDate;
+  openModal();
+};
+
+window.selectPlannedDay = async function(dateStr) {
+  S.plannedSelectedDate = dateStr;
+  await loadPlannedEvents();
+  render();
+};
+
+window.changeWeek = function(offset) {
+  const weekStart = new Date(S.plannedWeekStart + 'T12:00:00');
+  weekStart.setDate(weekStart.getDate() + (offset * 7));
+  S.plannedWeekStart = weekStart.toISOString().split('T')[0];
+
+  // Update selected date to the same day of week in the new week
+  const selectedDate = new Date(S.plannedSelectedDate + 'T12:00:00');
+  selectedDate.setDate(selectedDate.getDate() + (offset * 7));
+  S.plannedSelectedDate = selectedDate.toISOString().split('T')[0];
+
+  loadPlannedEvents().then(() => render());
+};
+
+window.openJumpToDate = function() {
+  const input = document.createElement('input');
+  input.type = 'date';
+  input.value = S.plannedSelectedDate;
+  input.style.position = 'absolute';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+
+  input.addEventListener('change', async function() {
+    if (input.value) {
+      S.plannedSelectedDate = input.value;
+
+      // Update week start to Monday of the selected date's week
+      const selected = new Date(input.value + 'T12:00:00');
+      const dayOfWeek = selected.getDay();
+      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const monday = new Date(selected);
+      monday.setDate(selected.getDate() + diff);
+      S.plannedWeekStart = monday.toISOString().split('T')[0];
+
+      await loadPlannedEvents();
+      render();
+    }
+    document.body.removeChild(input);
+  });
+
+  input.click();
+};
+
+window.removePlannedEvent = function(id, isRecurring) {
+  if (isRecurring) {
+    S.deleteEventId = id;
+    document.getElementById('delete-recurring-modal').classList.add('open');
+  } else {
+    if (!confirm('Delete this event? This cannot be undone.')) return;
+    deletePlannedEvent(id, 'single');
+  }
+};
+
+window.closeDeleteRecurringModal = function() {
+  document.getElementById('delete-recurring-modal').classList.remove('open');
+  S.deleteEventId = null;
+};
+
+window.deleteThisOnly = async function() {
+  if (!S.deleteEventId) return;
+  await deleteEventWithMode(S.deleteEventId, 'single');
+  closeDeleteRecurringModal();
+};
+
+window.deleteThisAndFuture = async function() {
+  if (!S.deleteEventId) return;
+  await deleteEventWithMode(S.deleteEventId, 'future');
+  closeDeleteRecurringModal();
+};
+
+async function deleteEventWithMode(id, deleteMode) {
+  try {
+    await apiCall('DELETE', `/api/events/${id}?delete_mode=${deleteMode}`);
+
+    // If on planned tab, reload planned events
+    if (S.tab === 'planned') {
+      await loadPlannedEvents();
+    }
+
+    // If on today/track tab, update EVS array
+    if (S.tab === 'today' || S.tab === 'track') {
+      EVS = EVS.filter(e => e.id !== id);
+      delete S.sess[id];
+      delete S.notes[id];
+      delete S.sessionIds[id];
+      if (S.active?.id === id) { S.active = null; S.elapsed = 0; }
+    }
+
+    S.openMenu = null;
+    render();
+  } catch (err) {
+    console.error('Failed to delete event:', err);
+    alert('Failed to delete event. Please try again.');
+  }
+}
 
 /* ── EDIT EVENT MODAL ─────────────────────────── */
 window.openEditModal = function(id) {
