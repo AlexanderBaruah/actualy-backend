@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+<canvas id="c180" width="180" height="180"></canvas>
+<canvas id="c192" width="192" height="192"></canvas>
+<canvas id="c512" width="512" height="512"></canvas>
+<script>
+// Create 180px icon
+const c180 = document.getElementById('c180');
+const ctx180 = c180.getContext('2d');
+ctx180.fillStyle = '#111111';
+ctx180.fillRect(0, 0, 180, 180);
+ctx180.fillStyle = '#ffffff';
+ctx180.font = 'bold 120px Outfit, sans-serif';
+ctx180.textAlign = 'center';
+ctx180.textBaseline = 'middle';
+ctx180.fillText('A', 90, 95);
+
+// Create 192px icon
+const c192 = document.getElementById('c192');
+const ctx192 = c192.getContext('2d');
+ctx192.fillStyle = '#111111';
+ctx192.fillRect(0, 0, 192, 192);
+ctx192.fillStyle = '#ffffff';
+ctx192.font = 'bold 128px Outfit, sans-serif';
+ctx192.textAlign = 'center';
+ctx192.textBaseline = 'middle';
+ctx192.fillText('A', 96, 101);
+
+// Create 512px icon
+const c512 = document.getElementById('c512');
+const ctx512 = c512.getContext('2d');
+ctx512.fillStyle = '#111111';
+ctx512.fillRect(0, 0, 512, 512);
+ctx512.fillStyle = '#ffffff';
+ctx512.font = 'bold 340px Outfit, sans-serif';
+ctx512.textAlign = 'center';
+ctx512.textBaseline = 'middle';
+ctx512.fillText('A', 256, 270);
+
+// Download links
+setTimeout(() => {
+  const link180 = document.createElement('a');
+  link180.download = 'icon-180.png';
+  link180.href = c180.toDataURL();
+  link180.click();
+  
+  const link192 = document.createElement('a');
+  link192.download = 'icon-192.png';
+  link192.href = c192.toDataURL();
+  link192.click();
+  
+  const link512 = document.createElement('a');
+  link512.download = 'icon-512.png';
+  link512.href = c512.toDataURL();
+  link512.click();
+}, 500);
+</script>
+</body>
+</html>
