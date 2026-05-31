@@ -236,13 +236,15 @@ router.post('/sync', authenticateUser, async (req, res) => {
     });
 
     const googleEvents = calendarResponse.data.items || [];
-    console.log('[Calendar] Found', googleEvents.length, 'total events from Google Calendar');
+    const googleFetchedCount = googleEvents.length;
+    console.log('[Calendar] Found', googleFetchedCount, 'total events from Google Calendar');
 
     // Build set of Google Calendar event IDs for reconciliation
     const googleEventIds = new Set(googleEvents.map(e => e.id).filter(id => id));
 
     const syncedEvents = [];
     const skippedEvents = [];
+    let existingSkippedCount = 0;
 
     // Import each Google Calendar event
     for (const gEvent of googleEvents) {
@@ -270,6 +272,7 @@ router.post('/sync', authenticateUser, async (req, res) => {
       if (existing) {
         console.log('[Calendar] Event already synced, skipping:', gEvent.summary);
         skippedEvents.push({ name: gEvent.summary, reason: 'already synced' });
+        existingSkippedCount++;
         continue;
       }
 
@@ -361,9 +364,28 @@ router.post('/sync', authenticateUser, async (req, res) => {
       console.log('[Calendar] Reconciliation complete. Deleted:', deletedEvents.length, 'Skipped:', skippedDeletions.length);
     }
 
+    // Query current count of synced events in database within window
+    const { data: dbSyncedEvents, error: dbCountError } = await req.supabase
+      .from('events')
+      .select('id')
+      .eq('user_id', req.user.id)
+      .eq('synced_from_calendar', true)
+      .gte('start_time', windowStart.toISOString())
+      .lt('start_time', windowEnd.toISOString());
+
+    const dbSyncedEventCount = dbCountError ? 0 : (dbSyncedEvents?.length || 0);
+    console.log('[Calendar] Current synced events in DB within window:', dbSyncedEventCount);
+
     // Always send response (moved outside the else block)
     res.json({
       success: true,
+      googleFetchedCount: googleFetchedCount,
+      insertedCount: syncedEvents.length,
+      existingSkippedCount: existingSkippedCount,
+      deletedCount: deletedEvents.length,
+      skippedDeletionCount: skippedDeletions.length,
+      dbSyncedEventCount: dbSyncedEventCount,
+      // Legacy fields for backwards compatibility
       synced: syncedEvents.length,
       events: syncedEvents,
       skipped: skippedEvents.length,
