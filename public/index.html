@@ -502,7 +502,7 @@ function rToday() {
   const totH = HOURS.length * HH;
   const hasA = EVS.some(e => tracked(e.id) >= 1);
 
-  const pEvts = EVS.map(e => {
+  const pEvts = EVS.filter(e => !e.isUnplanned).map(e => {
     const top = ((toM(e.sh, e.sm) - CS * 60) / 60) * HH;
     const h = (dur(e) / 60) * HH;
     const gcalIcon = e.synced ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="display:inline;margin-left:4px;vertical-align:middle"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z"/></svg>' : '';
@@ -1454,8 +1454,10 @@ window.startUnplannedTask = async function() {
     const eh = endTime.getHours();
     const em = endTime.getMinutes();
 
-    // Add to EVS array (marked as unplanned)
-    EVS.push({
+    // Create a temporary event object for tracking purposes only
+    // This is NOT added to EVS (which is for planned events)
+    // Instead, we create it on-demand during tracking
+    const unplannedEvent = {
       id: eventData.event.id,
       n: name,
       sh, sm, eh, em,
@@ -1463,7 +1465,11 @@ window.startUnplannedTask = async function() {
       bdr: c.bdr,
       bar: c.bar,
       isUnplanned: true
-    });
+    };
+
+    // Add to EVS temporarily so the tracking system can find it
+    // But it will be filtered out of planned timeline rendering
+    EVS.push(unplannedEvent);
     EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
 
     closeUnplannedModal();
