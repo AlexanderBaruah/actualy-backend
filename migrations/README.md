@@ -29,3 +29,39 @@ total_events | unplanned_count | planned_count | null_count
 ```
 
 All existing events should show as `planned_count` after the migration.
+
+## Migration: create-active-timers.sql
+
+**Purpose:** Create `active_timers` table for server-side timer tracking with cross-device sync.
+
+**What it does:**
+- Creates `active_timers` table with columns:
+  - `id` (UUID primary key)
+  - `user_id` (references auth.users)
+  - `event_id` (references events, nullable)
+  - `task_name` (text, required)
+  - `is_unplanned` (boolean, default false)
+  - `start_time` (timestamptz, required)
+  - `last_heartbeat` (timestamptz)
+  - `created_at`, `updated_at` (timestamptz)
+- Enables Row Level Security (RLS) with policies for user isolation
+- Creates indexes on `user_id` and `event_id` for performance
+- Creates unique constraint: one active timer per user
+- Creates trigger to auto-update `updated_at` timestamp
+
+**When to run:**
+⚠️ **CRITICAL:** This migration MUST be run IMMEDIATELY after deploying the server-side timer code. The app will fail without this table.
+
+**Expected output:**
+```
+status                          | row_count
+-------------------------------|----------
+active_timers table created    |     0
+```
+
+**Verification:**
+After running, verify the table exists:
+```sql
+SELECT table_name FROM information_schema.tables
+WHERE table_name = 'active_timers';
+```
