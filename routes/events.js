@@ -33,6 +33,7 @@ router.get('/today', async (req, res) => {
       .select('*')
       .gte('start_time', today.toISOString())
       .lt('start_time', tomorrow.toISOString())
+      .eq('is_unplanned', false)
       .order('start_time', { ascending: true });
 
     console.log('[Events] Found', data?.length || 0, 'events');
@@ -59,7 +60,7 @@ router.get('/today', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
-    const { name, start_time, end_time, color } = req.body;
+    const { name, start_time, end_time, color, is_unplanned } = req.body;
 
     // Validate required fields
     if (!name || !start_time || !end_time) {
@@ -77,7 +78,8 @@ router.post('/', async (req, res) => {
           name,
           start_time,
           end_time,
-          color: color || '#3b82f6'
+          color: color || '#3b82f6',
+          is_unplanned: is_unplanned || false
         })
         .select()
         .single();
@@ -270,6 +272,7 @@ router.get('/by-date', async (req, res) => {
       .select('*')
       .gte('start_time', startUTC.toISOString())
       .lt('start_time', endUTC.toISOString())
+      .eq('is_unplanned', false)
       .order('start_time', { ascending: true });
 
     if (error) {

@@ -1439,13 +1439,14 @@ window.startUnplannedTask = async function() {
   const endTime = new Date(startTime);
   endTime.setHours(endTime.getHours() + 1);
 
-  // Save to backend
+  // Save to backend with is_unplanned flag
   try {
     const eventData = await apiCall('POST', '/api/events', {
       name,
       start_time: startTime.toISOString(),
       end_time: endTime.toISOString(),
-      color: c.bdr
+      color: c.bdr,
+      is_unplanned: true
     });
 
     const sh = startTime.getHours();
@@ -1453,14 +1454,15 @@ window.startUnplannedTask = async function() {
     const eh = endTime.getHours();
     const em = endTime.getMinutes();
 
-    // Add to EVS array
+    // Add to EVS array (marked as unplanned)
     EVS.push({
       id: eventData.event.id,
       n: name,
       sh, sm, eh, em,
       fill: c.fill,
       bdr: c.bdr,
-      bar: c.bar
+      bar: c.bar,
+      isUnplanned: true
     });
     EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
 
@@ -1510,32 +1512,91 @@ window.changeWeek = function(offset) {
 };
 
 window.openJumpToDate = function() {
+  // Create visible date input that auto-opens
   const input = document.createElement('input');
   input.type = 'date';
   input.value = S.plannedSelectedDate;
-  input.style.position = 'absolute';
-  input.style.opacity = '0';
-  document.body.appendChild(input);
+  input.style.position = 'fixed';
+  input.style.top = '50%';
+  input.style.left = '50%';
+  input.style.transform = 'translate(-50%, -50%)';
+  input.style.zIndex = '9999';
+  input.style.fontSize = '16px';
+  input.style.padding = '12px';
+  input.style.border = '2px solid #0f9d8b';
+  input.style.borderRadius = '8px';
+  input.style.background = '#1c1c1c';
+  input.style.color = '#fff';
+  input.style.colorScheme = 'dark';
+
+  // Create backdrop
+  const backdrop = document.createElement('div');
+  backdrop.style.position = 'fixed';
+  backdrop.style.inset = '0';
+  backdrop.style.background = 'rgba(0,0,0,0.78)';
+  backdrop.style.zIndex = '9998';
+  backdrop.style.display = 'flex';
+  backdrop.style.alignItems = 'center';
+  backdrop.style.justifyContent = 'center';
+
+  document.body.appendChild(backdrop);
+  backdrop.appendChild(input);
+
+  const cleanup = () => {
+    if (document.body.contains(backdrop)) {
+      document.body.removeChild(backdrop);
+    }
+  };
 
   input.addEventListener('change', async function() {
     if (input.value) {
       S.plannedSelectedDate = input.value;
 
       // Update week start to Monday of the selected date's week
-      const selected = new Date(input.value + 'T12:00:00');
+      // Use local date to prevent timezone shift
+      const parts = input.value.split('-');
+      const selected = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
       const dayOfWeek = selected.getDay();
       const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
       const monday = new Date(selected);
       monday.setDate(selected.getDate() + diff);
-      S.plannedWeekStart = monday.toISOString().split('T')[0];
+
+      const year = monday.getFullYear();
+      const month = String(monday.getMonth() + 1).padStart(2, '0');
+      const day = String(monday.getDate()).padStart(2, '0');
+      S.plannedWeekStart = `${year}-${month}-${day}`;
 
       await loadPlannedEvents();
       render();
     }
-    document.body.removeChild(input);
+    cleanup();
   });
 
-  input.click();
+  // Close on backdrop click
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) {
+      cleanup();
+    }
+  });
+
+  // Close on Escape key
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      cleanup();
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+
+  // Auto-focus and show picker
+  setTimeout(() => {
+    input.focus();
+    try {
+      input.showPicker();
+    } catch (e) {
+      // showPicker not supported in all browsers, that's okay
+    }
+  }, 100);
 };
 
 /* ── PLANNED TAB MENU ─────────────────────────── */
