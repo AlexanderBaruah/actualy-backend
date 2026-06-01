@@ -589,7 +589,7 @@ function rTrack() {
 
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;font-size:15px">${esc(e.n)}</div>
-          <div style="font-size:13px;color:#555;margin-top:2px">${f12(e.sh,e.sm)} – ${f12(e.eh,e.em)} · ${fdur(dur(e))}</div>
+          <div style="font-size:13px;color:#555;margin-top:2px">${e.isUnplanned ? `Started ${f12(e.sh,e.sm)}` : `${f12(e.sh,e.sm)} – ${f12(e.eh,e.em)} · ${fdur(dur(e))}`}</div>
           ${isA ? `<div id="tmr-${e.id}" style="font-size:13px;color:#0f9d8b;margin-top:3px;font-weight:500">⏱ ${ftimer(S.elapsed)}</div>` : ''}
           ${!isA && secs > 0 ? `<div style="font-size:12px;color:#555;margin-top:2px">${fdur(Math.floor(secs/60))} tracked</div>` : ''}
           ${note ? `<div style="font-size:12px;color:#666;margin-top:4px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px">📝 ${esc(note)}</div>` : ''}
