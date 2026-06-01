@@ -33,7 +33,7 @@ router.get('/today', async (req, res) => {
       .select('*')
       .gte('start_time', today.toISOString())
       .lt('start_time', tomorrow.toISOString())
-      .eq('is_unplanned', false)
+      .or('is_unplanned.eq.false,is_unplanned.is.null')
       .order('start_time', { ascending: true });
 
     console.log('[Events] Found', data?.length || 0, 'events');
@@ -86,7 +86,9 @@ router.post('/', async (req, res) => {
 
       if (error) {
         console.error('Error creating event:', error);
-        return res.status(500).json({ error: 'Failed to create event' });
+        console.error('Error details:', JSON.stringify(error, null, 2));
+        console.error('Attempted insert:', { user_id: req.user.id, name, start_time, end_time, color: color || '#3b82f6', is_unplanned: is_unplanned || false });
+        return res.status(500).json({ error: 'Failed to create event', details: error.message });
       }
 
       return res.status(201).json({ event: data });
@@ -272,7 +274,7 @@ router.get('/by-date', async (req, res) => {
       .select('*')
       .gte('start_time', startUTC.toISOString())
       .lt('start_time', endUTC.toISOString())
-      .eq('is_unplanned', false)
+      .or('is_unplanned.eq.false,is_unplanned.is.null')
       .order('start_time', { ascending: true });
 
     if (error) {

@@ -1941,6 +1941,8 @@ window.syncGoogleCalendar = async function() {
     const result = await apiCall('POST', '/api/calendar/sync');
 
     if (result.success) {
+      // TODO: Replace detailed diagnostic message with simple "Calendar synced successfully" message
+      // This detailed breakdown is helpful for debugging but not ideal for end users
       // Build detailed diagnostic message
       let message = `Google Calendar Sync Complete\n\n`;
       message += `📥 Fetched from Google: ${result.googleFetchedCount || 0}\n`;
@@ -2027,6 +2029,8 @@ window.confirmGcalConnect = async function() {
         try {
           const syncResult = await apiCall('POST', '/api/calendar/sync');
           if (syncResult.success) {
+            // TODO: Replace detailed diagnostic message with simple "Calendar synced successfully" message
+            // This detailed breakdown is helpful for debugging but not ideal for end users
             // Build detailed diagnostic message
             let message = `Google Calendar Sync Complete\n\n`;
             message += `📥 Fetched from Google: ${syncResult.googleFetchedCount || 0}\n`;
