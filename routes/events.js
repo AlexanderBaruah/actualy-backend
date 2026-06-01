@@ -30,7 +30,6 @@ router.get('/today', async (req, res) => {
       .select('*')
       .gte('start_time', today.toISOString())
       .lt('start_time', tomorrow.toISOString())
-      .or('is_unplanned.eq.false,is_unplanned.is.null')
       .order('start_time', { ascending: true });
 
     if (error) {

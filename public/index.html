@@ -459,7 +459,8 @@ async function loadTodaysEvents() {
         fill: COLORS[colorIdx].fill,
         bdr: e.color,
         bar: COLORS[colorIdx].bar,
-        synced: e.synced_from_calendar || false
+        synced: e.synced_from_calendar || false,
+        isUnplanned: e.is_unplanned || false
       };
     });
   } catch (err) {
@@ -977,7 +978,9 @@ function rPlanned() {
 
 /* ── STATS VIEW ───────────────────────────────── */
 function rStats() {
-  const tp = EVS.reduce((s, e) => s + dur(e), 0);
+  // Only include PLANNED events in planned total (exclude unplanned tasks)
+  const plannedEvents = EVS.filter(e => !e.isUnplanned);
+  const tp = plannedEvents.reduce((s, e) => s + dur(e), 0);
   const tt = EVS.reduce((s, e) => s + Math.floor(tracked(e.id) / 60), 0);
   const comp = tp > 0 ? Math.round((tt / tp) * 100) : 0;
   const cc = comp === 0 ? '#ef4444' : comp < 50 ? '#f59e0b' : '#0f9d8b';
@@ -2087,22 +2090,67 @@ window.confirmGcalConnect = async function() {
 
 /* ── SESSION RECOVERY & AUTO-SAVE ────────────── */
 // Recover active session from localStorage on page load
-function recoverActiveSession() {
+async function recoverActiveSession() {
   try {
     const saved = localStorage.getItem('activeSession');
-    if (saved) {
-      const { id, startMs, firstStart } = JSON.parse(saved);
-      const elapsed = Math.floor((Date.now() - startMs) / 1000);
+    if (!saved) return;
 
-      // Only recover if event exists and session is less than 24 hours old
-      if (EVS.find(e => e.id === id) && elapsed < 86400) {
-        S.active = { id, startMs };
-        S.sess[id] = { secs: 0, startMs: firstStart };
-        S.elapsed = elapsed;
-        console.log(`Recovered active session for event ${id}, elapsed: ${elapsed}s`);
-      } else {
+    const { id, startMs, firstStart, eventName } = JSON.parse(saved);
+    const elapsed = Math.floor((Date.now() - startMs) / 1000);
+
+    // Session must be less than 24 hours old
+    if (elapsed >= 86400) {
+      localStorage.removeItem('activeSession');
+      return;
+    }
+
+    // Check if event exists in EVS (for planned events)
+    let event = EVS.find(e => e.id === id);
+
+    // If not in EVS, try to fetch it (for unplanned tasks)
+    if (!event) {
+      try {
+        const data = await apiCall('GET', `/api/events/${id}`);
+        if (data.event) {
+          const e = data.event;
+          const start = new Date(e.start_time);
+          const end = new Date(e.end_time);
+          let colorIdx = COLORS.findIndex(c => c.bdr === e.color);
+          if (colorIdx === -1) colorIdx = 1;
+
+          event = {
+            id: e.id,
+            n: e.name,
+            sh: start.getHours(),
+            sm: start.getMinutes(),
+            eh: end.getHours(),
+            em: end.getMinutes(),
+            fill: COLORS[colorIdx].fill,
+            bdr: e.color,
+            bar: COLORS[colorIdx].bar,
+            synced: e.synced_from_calendar || false,
+            isUnplanned: e.is_unplanned || false
+          };
+
+          // Add to EVS so it appears in Track tab
+          EVS.push(event);
+          EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
+        }
+      } catch (err) {
+        console.error(`Failed to fetch event ${id} for session recovery:`, err);
         localStorage.removeItem('activeSession');
+        return;
       }
+    }
+
+    // Recover the active session
+    if (event) {
+      S.active = { id, startMs };
+      S.sess[id] = { secs: 0, startMs: firstStart };
+      S.elapsed = elapsed;
+      console.log(`Recovered active session for event ${id} (${event.isUnplanned ? 'unplanned' : 'planned'}), elapsed: ${elapsed}s`);
+    } else {
+      localStorage.removeItem('activeSession');
     }
   } catch (err) {
     console.error('Failed to recover session:', err);
@@ -2131,8 +2179,8 @@ function startAutoSave() {
 }
 
 /* ── INITIALIZE ───────────────────────────────── */
-initAuth().then(() => {
-  recoverActiveSession();
+initAuth().then(async () => {
+  await recoverActiveSession();
   render();
   startAutoSave();
 });
