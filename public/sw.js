@@ -1,7 +1,7 @@
 // Service Worker for Actualy PWA
 // Simple cache-first strategy for fast loading
 
-const CACHE_NAME = 'actualy-v14';
+const CACHE_NAME = 'actualy-v15';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -13,10 +13,14 @@ const urlsToCache = [
 
 // Install event - cache resources
 self.addEventListener('install', event => {
+  console.log('[SW] Installing new service worker, version:', CACHE_NAME);
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => cache.addAll(urlsToCache))
-      .then(() => self.skipWaiting())
+      .then(() => {
+        console.log('[SW] Installation complete, skipping waiting');
+        return self.skipWaiting();
+      })
   );
 });
 
@@ -68,4 +72,11 @@ self.addEventListener('fetch', event => {
         }
       })
   );
+});
+
+// Force immediate activation of new service worker
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });

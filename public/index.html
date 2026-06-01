@@ -360,17 +360,25 @@ const S = {
   plannedDate: null, // Date object for Add Event modal
 };
 
+// App version tracking
+const APP_VERSION = 'timer-server-v15';
+console.log(`[APP VERSION] ${APP_VERSION}`);
+console.log('[AUTH] Initializing auth...');
+
 /* ── AUTH & API ────────────────────────────────── */
 async function initAuth() {
   const { data: { session } } = await supabaseClient.auth.getSession();
   if (session) {
     userSession = session;
     userToken = session.access_token;
+    console.log('[AUTH] Authenticated user ID:', session.user.id);
+    console.log('[AUTH] User email:', session.user.email);
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
     await loadTodaysEvents();
     render();
   } else {
+    console.log('[AUTH] No session found');
     document.getElementById('auth-screen').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
   }
@@ -1194,99 +1202,102 @@ window.tog = async id => {
       S.saving = false; // Re-enable clicking
     }
   } else {
-    // Starting timer - call server API
+    // STARTING TIMER - SERVER FIRST
+    console.log('[TIMER] Attempting to start timer for event:', id);
+
     const event = EVS.find(e => e.id === id);
     if (!event) {
-      console.error(`[TIMER] Event ${id} not found in EVS`);
-      alert('Event not found. Please refresh the page.');
+      console.error('[TIMER] Event not found:', id);
+      alert('Event not found');
       return;
     }
 
-    console.log(`[TIMER] Starting timer for event ${id} (${event.n})`);
-
+    // ALWAYS call server first, don't check S.active
     try {
-      // Call server to start timer
+      console.log('[TIMER] Calling POST /api/timer/start...');
       const startData = await apiCall('POST', '/api/timer/start', {
         eventId: id,
         taskName: event.n,
         isUnplanned: event.isUnplanned || false
       });
 
-      console.log(`[TIMER] Server started timer:`, startData.timer);
+      console.log('[TIMER] Server timer started successfully:', startData.timer);
 
-      // Get server start time
-      const serverStartTime = new Date(startData.timer.start_time).getTime();
+      // NOW update local state with server's start time
+      const serverStartMs = new Date(startData.timer.start_time).getTime();
 
-      // Update local state
-      S.active = { id, startMs: serverStartTime };
+      // Save any previous active timer first
+      if (S.active && S.active.id !== id) {
+        const secs = Math.floor((Date.now() - S.active.startMs) / 1000);
+        const prev = S.sess[S.active.id]?.secs || 0;
+        const firstStart = S.sess[S.active.id]?.startMs || S.active.startMs;
+        S.sess[S.active.id] = { secs: prev + secs, startMs: firstStart };
+      }
+
+      S.active = { id, startMs: serverStartMs };
       S.elapsed = 0;
 
-      // Save to localStorage as backup
+      if (!S.sess[id]) {
+        S.sess[id] = { secs: 0, startMs: serverStartMs };
+      }
+
       localStorage.setItem('activeSession', JSON.stringify({
         id,
-        startMs: serverStartTime,
-        firstStart: serverStartTime
+        startMs: serverStartMs,
+        firstStart: S.sess[id]?.startMs || serverStartMs
       }));
 
-      console.log(`[TIMER] Timer started successfully for event ${id}`);
+      console.log('[TIMER] Timer started successfully for event:', id);
     } catch (err) {
-      console.error('[TIMER] Failed to start timer on server:', err);
+      console.error('[TIMER] Error starting timer:', err);
 
-      // Handle 409 conflict (timer already active) - recover the active timer
-      if (err.error && err.error.includes('API error: 409')) {
+      // Handle 409 conflict - timer already running on server
+      // The apiCall function throws the parsed JSON response on error
+      if (err.activeTimer) {
+        // Server returned 409 with active timer info
         console.log('[TIMER] Start returned 409, recovering active timer from response');
+        console.log('[TIMER] Recovering active timer:', {
+          eventId: err.activeTimer.eventId,
+          taskName: err.activeTimer.taskName,
+          startTime: err.activeTimer.startTime
+        });
 
-        // Check if the error response contains activeTimer data
-        if (err.activeTimer) {
-          const activeTimer = err.activeTimer;
-          const serverStartTime = new Date(activeTimer.startTime).getTime();
+        // Restore timer with server's start time
+        const serverStartMs = new Date(err.activeTimer.startTime).getTime();
+        S.active = {
+          id: err.activeTimer.eventId,
+          startMs: serverStartMs
+        };
 
-          console.log('[TIMER] Recovering active timer:', {
-            eventId: activeTimer.eventId,
-            taskName: activeTimer.taskName,
-            startTime: activeTimer.startTime
-          });
-
-          // Immediately restore the server's active timer
-          S.active = {
-            id: activeTimer.eventId,
-            startMs: serverStartTime
+        if (!S.sess[err.activeTimer.eventId]) {
+          S.sess[err.activeTimer.eventId] = {
+            secs: 0,
+            startMs: serverStartMs
           };
-
-          // Initialize session tracking if needed
-          if (!S.sess[activeTimer.eventId]) {
-            S.sess[activeTimer.eventId] = {
-              secs: 0,
-              startMs: serverStartTime
-            };
-          }
-
-          // Save to localStorage
-          localStorage.setItem('activeSession', JSON.stringify({
-            id: activeTimer.eventId,
-            startMs: serverStartTime,
-            firstStart: serverStartTime
-          }));
-
-          // Calculate elapsed time
-          S.elapsed = Math.floor((Date.now() - serverStartTime) / 1000);
-
-          // Fetch and render the full timer state
-          await fetchAndSyncActiveTimer();
-          render();
-
-          alert(`Timer "${activeTimer.taskName}" is already running. Continuing...`);
-        } else {
-          alert('A timer is already running. Please stop it first.');
         }
-        return;
-      } else if (err.error && err.error.includes('already active')) {
-        alert('A timer is already running. Please stop it first.');
-        return;
+
+        S.elapsed = Math.floor((Date.now() - serverStartMs) / 1000);
+
+        localStorage.setItem('activeSession', JSON.stringify({
+          id: err.activeTimer.eventId,
+          startMs: serverStartMs,
+          firstStart: serverStartMs
+        }));
+
+        await fetchAndSyncActiveTimer();
+        render();
+        alert(`Timer "${err.activeTimer.taskName}" is already running. Continuing...`);
+      } else if (err.error && (err.error.includes('already active') || err.error.includes('409'))) {
+        // Generic 409 error without activeTimer data
+        alert('Timer already active. Stop it before starting another.');
+        // Try to recover state from server
+        await fetchAndSyncActiveTimer();
+        render();
       } else {
-        alert(`Failed to start timer: ${err.error || err.message || 'Unknown error'}. Please try again.`);
-        return;
+        // Other errors
+        alert(`Failed to start timer: ${err.error || err.message || 'Unknown error'}`);
       }
+      return;
     }
   }
   render();
@@ -1598,7 +1609,9 @@ window.startUnplannedTask = async function() {
     EVS.push(unplannedEvent);
     EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
 
+    console.log('[TIMER] Unplanned task created, starting timer...');
     console.log(`[TIMER] Created unplanned task ${eventData.event.id}, starting timer...`);
+    console.log('[TIMER] Calling POST /api/timer/start for unplanned task...');
 
     // Start timer on server
     try {
@@ -1608,6 +1621,10 @@ window.startUnplannedTask = async function() {
         isUnplanned: true
       });
 
+      console.log('[TIMER] Unplanned task timer started on server:', {
+        eventId: eventData.event.id,
+        taskName: name
+      });
       console.log(`[TIMER] Server started timer for unplanned task:`, startData.timer);
 
       // Get server start time
@@ -2346,12 +2363,17 @@ async function recoverActiveSession() {
     if (elapsed >= 86400) {
       console.log('[TIMER] LocalStorage session too old (>24h), clearing');
       localStorage.removeItem('activeSession');
+      S.active = null;
+      S.elapsed = 0;
       return;
     }
 
+    console.log('[TIMER] Recovery: Local active timer was stale; server had no timer, clearing local state');
     console.log(`[TIMER] Found localStorage session for event ${id}, but server has no active timer - clearing`);
     // Server is source of truth - if it doesn't have a timer, don't restore from localStorage
     localStorage.removeItem('activeSession');
+    S.active = null;
+    S.elapsed = 0;
 
   } catch (err) {
     console.error('[TIMER] Failed to recover session:', err);
@@ -2370,7 +2392,9 @@ async function fetchAndSyncActiveTimer() {
     console.log('[TIMER] Polling: response received', {
       hasActiveTimer: !!serverTimer,
       serverTimer: serverTimer?.event_id || null,
-      localTimer: S.active?.id || null
+      serverStartTime: serverTimer?.start_time || null,
+      localTimer: S.active?.id || null,
+      localStartTime: S.active?.startMs ? new Date(S.active.startMs).toISOString() : null
     });
 
     // Case 1: Server has active timer
