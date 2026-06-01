@@ -25,9 +25,6 @@ router.get('/today', async (req, res) => {
     const today = new Date(todayPacific.getTime() - (pacificOffset * 60 * 1000));
     const tomorrow = new Date(tomorrowPacific.getTime() - (pacificOffset * 60 * 1000));
 
-    console.log('[Events] Fetching events for today:', today.toISOString(), 'to', tomorrow.toISOString());
-    console.log('[Events] Pacific Time date:', todayPacific.toDateString());
-
     const { data, error } = await req.supabase
       .from('events')
       .select('*')
@@ -35,11 +32,6 @@ router.get('/today', async (req, res) => {
       .lt('start_time', tomorrow.toISOString())
       .or('is_unplanned.eq.false,is_unplanned.is.null')
       .order('start_time', { ascending: true });
-
-    console.log('[Events] Found', data?.length || 0, 'events');
-    if (data && data.length > 0) {
-      console.log('[Events] First event:', data[0].name, data[0].start_time);
-    }
 
     if (error) {
       console.error('Error fetching events:', error);
@@ -86,8 +78,6 @@ router.post('/', async (req, res) => {
 
       if (error) {
         console.error('Error creating event:', error);
-        console.error('Error details:', JSON.stringify(error, null, 2));
-        console.error('Attempted insert:', { user_id: req.user.id, name, start_time, end_time, color: color || '#3b82f6', is_unplanned: is_unplanned || false });
         return res.status(500).json({ error: 'Failed to create event', details: error.message });
       }
 
@@ -246,7 +236,6 @@ router.delete('/:id', async (req, res) => {
  * IMPORTANT: This route must come before /:id to avoid matching "by-date" as an ID
  */
 router.get('/by-date', async (req, res) => {
-  console.log('[events] HIT /by-date route, date:', req.query.date);
   try {
     const dateParam = req.query.date;
 
@@ -266,8 +255,6 @@ router.get('/by-date', async (req, res) => {
     // Convert Pacific midnight to UTC (Pacific is UTC-7, so Pacific midnight = UTC 07:00)
     const startUTC = new Date(dayStartPacific.getTime() - (pacificOffset * 60 * 1000));
     const endUTC = new Date(dayEndPacific.getTime() - (pacificOffset * 60 * 1000));
-
-    console.log('[Events] Fetching events for date:', dateParam, 'UTC range:', startUTC.toISOString(), 'to', endUTC.toISOString());
 
     const { data, error } = await req.supabase
       .from('events')
@@ -347,7 +334,6 @@ router.get('/range', async (req, res) => {
  * to avoid matching specific route names as IDs
  */
 router.get('/:id', async (req, res) => {
-  console.log('[events] HIT GET /:id route, id:', req.params.id);
   try {
     const eventId = req.params.id;
 

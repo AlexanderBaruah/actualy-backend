@@ -1947,21 +1947,27 @@ window.syncGoogleCalendar = async function() {
     const result = await apiCall('POST', '/api/calendar/sync');
 
     if (result.success) {
-      // TODO: Replace detailed diagnostic message with simple "Calendar synced successfully" message
-      // This detailed breakdown is helpful for debugging but not ideal for end users
-      // Build detailed diagnostic message
-      let message = `Google Calendar Sync Complete\n\n`;
-      message += `📥 Fetched from Google: ${result.googleFetchedCount || 0}\n`;
-      message += `➕ New events inserted: ${result.insertedCount || 0}\n`;
-      message += `⏭️  Already existed (skipped): ${result.existingSkippedCount || 0}\n`;
-      message += `🗑️  Deleted from Actualy: ${result.deletedCount || 0}\n`;
-      message += `🔒 Preserved (has sessions): ${result.skippedDeletionCount || 0}\n`;
-      message += `📊 Total in DB (within ${result.windowDays || 60} days): ${result.dbSyncedEventCount || 0}`;
+      // Build user-facing sync message
+      const inserted = result.insertedCount || 0;
+      const deleted = result.deletedCount || 0;
+      const preserved = result.skippedDeletionCount || 0;
+
+      let message = 'Calendar synced successfully.';
+
+      if (inserted > 0 || deleted > 0) {
+        const parts = [];
+        if (inserted > 0) parts.push(`Added ${inserted} new event${inserted === 1 ? '' : 's'}`);
+        if (deleted > 0) parts.push(`removed ${deleted} deleted event${deleted === 1 ? '' : 's'}`);
+        message += ' ' + parts.join(', ') + '.';
+      } else {
+        message += ' No new changes.';
+      }
+
+      if (preserved > 0) {
+        message += '\nSome tracked events were preserved.';
+      }
 
       alert(message);
-
-      // Also log to console for debugging
-      console.log('[Sync] Full response:', result);
 
       // Reload events based on current tab
       if (S.tab === 'today' || S.tab === 'track') {
@@ -2035,21 +2041,27 @@ window.confirmGcalConnect = async function() {
         try {
           const syncResult = await apiCall('POST', '/api/calendar/sync');
           if (syncResult.success) {
-            // TODO: Replace detailed diagnostic message with simple "Calendar synced successfully" message
-            // This detailed breakdown is helpful for debugging but not ideal for end users
-            // Build detailed diagnostic message
-            let message = `Google Calendar Sync Complete\n\n`;
-            message += `📥 Fetched from Google: ${syncResult.googleFetchedCount || 0}\n`;
-            message += `➕ New events inserted: ${syncResult.insertedCount || 0}\n`;
-            message += `⏭️  Already existed (skipped): ${syncResult.existingSkippedCount || 0}\n`;
-            message += `🗑️  Deleted from Actualy: ${syncResult.deletedCount || 0}\n`;
-            message += `🔒 Preserved (has sessions): ${syncResult.skippedDeletionCount || 0}\n`;
-            message += `📊 Total in DB (within ${syncResult.windowDays || 60} days): ${syncResult.dbSyncedEventCount || 0}`;
+            // Build user-facing sync message
+            const inserted = syncResult.insertedCount || 0;
+            const deleted = syncResult.deletedCount || 0;
+            const preserved = syncResult.skippedDeletionCount || 0;
+
+            let message = 'Calendar synced successfully.';
+
+            if (inserted > 0 || deleted > 0) {
+              const parts = [];
+              if (inserted > 0) parts.push(`Added ${inserted} new event${inserted === 1 ? '' : 's'}`);
+              if (deleted > 0) parts.push(`removed ${deleted} deleted event${deleted === 1 ? '' : 's'}`);
+              message += ' ' + parts.join(', ') + '.';
+            } else {
+              message += ' No new changes.';
+            }
+
+            if (preserved > 0) {
+              message += '\nSome tracked events were preserved.';
+            }
 
             alert(message);
-
-            // Also log to console for debugging
-            console.log('[Sync] Full response:', syncResult);
 
             // Reload events based on current tab
             if (S.tab === 'today' || S.tab === 'track') {
