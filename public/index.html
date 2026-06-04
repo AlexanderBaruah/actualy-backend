@@ -311,7 +311,7 @@
 
 <script>
 // App version tracking
-const APP_VERSION = 'timer-local-stable-v1';
+const APP_VERSION = 'timer-local-stable-v1.1';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 
 // Initialize Supabase
@@ -339,8 +339,8 @@ let EVS = [];
 let pickedColor = 0;
 let editingEventId = null;
 let editPickedColor = 0;
-const HH = 72, CS = 7;
-const HOURS = Array.from({ length: 12 }, (_, i) => i + CS);
+const HH = 72, CS = 0;
+const HOURS = Array.from({ length: 24 }, (_, i) => i + CS);
 const S = {
   tab: 'today',
   sess: {},
