@@ -277,6 +277,25 @@
   </div>
 </div>
 
+<!-- TIMER CONFLICT MODAL -->
+<div id="timer-conflict-modal" class="overlay">
+  <div class="modal-box" style="max-width:460px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="font-size:17px;font-weight:600">Timer Already Running</span>
+      <button onclick="closeTimerConflictModal()" style="background:none;border:none;color:#666;cursor:pointer;font-size:26px;line-height:1;padding:0 4px">×</button>
+    </div>
+    <div id="timer-conflict-message" style="font-size:14px;color:#ccc;line-height:1.6;margin-bottom:24px"></div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="mbtn-save" onclick="confirmStopAndStart()" style="background:#ef4444">
+        Stop old timer & start new one
+      </button>
+      <button class="mbtn-cancel" onclick="closeTimerConflictModal()">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- GOOGLE CALENDAR CONNECT MODAL -->
 <div id="gcal-connect-modal" class="overlay">
   <div class="modal-box" style="max-width:420px">
@@ -371,6 +390,57 @@ const S = {
   startingTimer: false, // prevent simultaneous timer start calls
 };
 
+// Timer conflict resolution state
+const timerConflict = {
+  oldTimer: null,
+  newEventId: null,
+  newTaskName: null,
+  newIsUnplanned: false
+};
+
+window.closeTimerConflictModal = function() {
+  document.getElementById('timer-conflict-modal').classList.remove('open');
+  timerConflict.oldTimer = null;
+  timerConflict.newEventId = null;
+  timerConflict.newTaskName = null;
+  timerConflict.newIsUnplanned = false;
+};
+
+window.confirmStopAndStart = async function() {
+  debugLog('confirmStopAndStart() called');
+  closeTimerConflictModal();
+
+  try {
+    // Call stop-and-start endpoint
+    const result = await apiCall('POST', '/api/timer/stop-and-start', {
+      oldTimerId: timerConflict.oldTimer.id,
+      newEventId: timerConflict.newEventId,
+      newTaskName: timerConflict.newTaskName,
+      newIsUnplanned: timerConflict.newIsUnplanned
+    });
+
+    debugLog(`Stop-and-start SUCCESS: stopped "${timerConflict.oldTimer.taskName}", started "${timerConflict.newTaskName}"`);
+
+    // Update local state with new timer
+    const serverStartMs = new Date(result.activeTimer.startTime).getTime();
+    S.active = { id: result.activeTimer.eventId, startMs: serverStartMs };
+    S.elapsed = 0;
+
+    localStorage.setItem('activeSession', JSON.stringify({
+      id: result.activeTimer.eventId,
+      startMs: serverStartMs,
+      firstStart: serverStartMs
+    }));
+
+    alert(`Stopped "${timerConflict.oldTimer.taskName}" and started "${timerConflict.newTaskName}".`);
+    render();
+
+  } catch (err) {
+    debugLog(`Stop-and-start FAILED: ${err.error || err.message}`);
+    alert(`Failed to stop old timer: ${err.error || err.message}`);
+  }
+};
+
 // Debug logging for iPhone (no console access)
 window.debugLog = function(msg) {
   console.log('[DEBUG]', msg);
@@ -398,7 +468,7 @@ window.clearDebugPanel = function() {
 };
 
 // App version tracking
-const APP_VERSION = 'timer-server-v17';
+const APP_VERSION = 'timer-server-v18';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 console.log('[AUTH] Initializing auth...');
 
@@ -537,6 +607,21 @@ function fdur(m) {
 function ftimer(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   return (h ? `${h}:` : '') + `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+function formatElapsed(startTime) {
+  const now = new Date();
+  const start = new Date(startTime);
+  const hours = Math.floor((now - start) / (1000 * 60 * 60));
+  const minutes = Math.floor(((now - start) % (1000 * 60 * 60)) / (1000 * 60));
+
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    return `${days} day${days === 1 ? '' : 's'} ago`;
+  } else if (hours > 0) {
+    return `${hours}h ${minutes}m ago`;
+  } else {
+    return `${minutes}m ago`;
+  }
 }
 function tracked(id) { return (S.sess[id]?.secs || 0) + (S.active?.id === id ? S.elapsed : 0); }
 function actualStartMs(id) {
@@ -1302,11 +1387,47 @@ async function startTimerOnServer(eventId, taskName, isUnplanned) {
 
     // Handle 409 conflict - timer already active
     if (err.activeTimer || (err.error && (err.error.includes('already active') || err.error.includes('409')))) {
-      debugLog(`409 Conflict detected, attempting recovery`);
+      debugLog(`409 Conflict detected`);
 
       // Try to parse activeTimer from error response
       if (err.activeTimer) {
-        debugLog(`Recovery: activeTimer found in error response`);
+        debugLog(`Conflict: activeTimer found in error response - eventId=${err.activeTimer.eventId}`);
+
+        // Check if it's a DIFFERENT event than what we're trying to start
+        if (err.activeTimer.eventId !== eventId) {
+          debugLog(`CONFLICT: Different event detected. Old=${err.activeTimer.eventId}, New=${eventId}`);
+          debugLog(`Old timer: "${err.activeTimer.taskName}", elapsedHours=${err.activeTimer.elapsedHours}, isStale=${err.activeTimer.isStale}`);
+
+          // Calculate elapsed time and build conflict message
+          const elapsedText = formatElapsed(err.activeTimer.startTime);
+          let conflictMessage = `"${err.activeTimer.taskName}" is already running (started ${elapsedText}).`;
+
+          // Add stale warning if applicable
+          if (err.activeTimer.isStale) {
+            conflictMessage += `<br><br><span style="color:#f59e0b">⚠️ This timer is from a previous day.</span>`;
+          }
+
+          conflictMessage += `<br><br>Do you want to stop it and start "${taskName}"?`;
+
+          // Show conflict modal
+          timerConflict.oldTimer = err.activeTimer;
+          timerConflict.newEventId = eventId;
+          timerConflict.newTaskName = taskName;
+          timerConflict.newIsUnplanned = isUnplanned || false;
+
+          document.getElementById('timer-conflict-message').innerHTML = conflictMessage;
+          document.getElementById('timer-conflict-modal').classList.add('open');
+
+          debugLog(`Conflict modal shown for different event`);
+          return {
+            success: false,
+            reason: 'conflict_shown',
+            message: 'Conflict modal displayed to user'
+          };
+        }
+
+        // Same event - recover it as before
+        debugLog(`Same event conflict - recovering timer for eventId=${err.activeTimer.eventId}`);
         const serverStartMs = new Date(err.activeTimer.startTime).getTime();
         S.active = {
           id: err.activeTimer.eventId,
@@ -1479,8 +1600,11 @@ window.tog = async id => {
     if (!result.success) {
       debugLog(`Timer start FAILED: reason=${result.reason}, message=${result.message}`);
 
-      // Show detailed error to user
-      if (result.reason === 'already_starting') {
+      // Show detailed error to user (except for conflict_shown, which already showed modal)
+      if (result.reason === 'conflict_shown') {
+        debugLog(`Conflict modal already shown, not displaying alert`);
+        return;
+      } else if (result.reason === 'already_starting') {
         alert('A timer is already being started. Please wait...');
       } else {
         const fullMsg = result.fullError
