@@ -443,7 +443,7 @@ window.clearDebugPanel = function() {
 };
 
 // App version tracking
-const APP_VERSION = 'timer-server-v25';
+const APP_VERSION = 'timer-server-v26';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 console.log('[AUTH] Initializing auth...');
 
@@ -601,6 +601,36 @@ function formatElapsed(startTime) {
     return `${minutes}m ago`;
   }
 }
+
+// Shared helper to handle 409 conflicts in modal confirmation paths
+function handleTimerConflictError(err, requestedTimerInfo) {
+  debugLog(`handleTimerConflictError: ${JSON.stringify(err)}`);
+
+  // Check if this is a 409 conflict with activeTimer
+  if (err.status === 409 && err.activeTimer) {
+    debugLog('409 Conflict in modal path - showing updated conflict modal');
+
+    // Update conflict state with the NEW active timer from server
+    S.timerConflict = {
+      oldTimer: err.activeTimer,
+      newEventId: requestedTimerInfo.newEventId,
+      newTaskName: requestedTimerInfo.newTaskName,
+      newIsUnplanned: requestedTimerInfo.newIsUnplanned,
+      createdEventId: requestedTimerInfo.createdEventId
+    };
+
+    const elapsedText = formatElapsed(err.activeTimer.startTime);
+    const conflictMessage = `"${err.activeTimer.taskName}" is now running (started ${elapsedText}).<br><br>Do you want to stop it and start "${requestedTimerInfo.newTaskName}"?`;
+
+    document.getElementById('timer-conflict-message').innerHTML = conflictMessage;
+    document.getElementById('timer-conflict-modal').classList.add('open');
+
+    return true; // Conflict handled
+  }
+
+  return false; // Not a 409 conflict, caller should show error
+}
+
 function tracked(id) { return (S.sess[id]?.secs || 0) + (S.active?.id === id ? S.elapsed : 0); }
 function actualStartMs(id) {
   if (S.active?.id === id) return S.active.startMs;
@@ -1598,8 +1628,20 @@ window.confirmStopAndStart = async function() {
     alert(`Stopped "${conflict.oldTimer.taskName}" and started "${conflict.newTaskName}".`);
 
   } catch (err) {
-    debugLog(`Stop-and-start FAILED: ${err.error || err.message}`);
-    alert(`Failed to stop old timer: ${err.error || err.message}`);
+    debugLog(`Stop-and-start FAILED: ${JSON.stringify(err)}`);
+
+    // Handle 409 conflict - another timer is now active
+    const conflictHandled = handleTimerConflictError(err, {
+      newEventId: conflict.newEventId,
+      newTaskName: conflict.newTaskName,
+      newIsUnplanned: conflict.newIsUnplanned,
+      createdEventId: conflict.createdEventId
+    });
+
+    if (!conflictHandled) {
+      // Not a 409 conflict, show generic error
+      alert(`Failed to stop old timer: ${err.error || err.message}`);
+    }
   }
 };
 
@@ -1647,8 +1689,20 @@ window.confirmDiscardAndStart = async function() {
     alert(`Discarded stale timer and started "${conflict.newTaskName}".`);
 
   } catch (err) {
-    debugLog(`Discard-and-start FAILED: ${err.error || err.message}`);
-    alert(`Failed: ${err.error || err.message}`);
+    debugLog(`Discard-and-start FAILED: ${JSON.stringify(err)}`);
+
+    // Handle 409 conflict - another timer is now active
+    const conflictHandled = handleTimerConflictError(err, {
+      newEventId: conflict.newEventId,
+      newTaskName: conflict.newTaskName,
+      newIsUnplanned: conflict.newIsUnplanned,
+      createdEventId: conflict.createdEventId
+    });
+
+    if (!conflictHandled) {
+      // Not a 409 conflict, show generic error
+      alert(`Failed: ${err.error || err.message}`);
+    }
   }
 };
 
@@ -1675,8 +1729,20 @@ window.confirmSaveAndStart = async function() {
     alert(`Saved stale timer (capped) and started "${conflict.newTaskName}".`);
 
   } catch (err) {
-    debugLog(`Save-capped-and-start FAILED: ${err.error || err.message}`);
-    alert(`Failed: ${err.error || err.message}`);
+    debugLog(`Save-capped-and-start FAILED: ${JSON.stringify(err)}`);
+
+    // Handle 409 conflict - another timer is now active
+    const conflictHandled = handleTimerConflictError(err, {
+      newEventId: conflict.newEventId,
+      newTaskName: conflict.newTaskName,
+      newIsUnplanned: conflict.newIsUnplanned,
+      createdEventId: conflict.createdEventId
+    });
+
+    if (!conflictHandled) {
+      // Not a 409 conflict, show generic error
+      alert(`Failed: ${err.error || err.message}`);
+    }
   }
 };
 
