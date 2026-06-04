@@ -311,7 +311,7 @@
 
 <script>
 // App version tracking
-const APP_VERSION = 'timer-local-stable-v1.1';
+const APP_VERSION = 'timer-local-stable-v1.2';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 
 // Initialize Supabase
@@ -2219,6 +2219,9 @@ function startAutoSave() {
 
 /* ── INITIALIZE ───────────────────────────────── */
 initAuth().then(async () => {
+  // Load today's events BEFORE recovering active session
+  // so that EVS is populated when recovery looks for the event
+  await loadTodaysEvents();
   await recoverActiveSession();
   render();
   startAutoSave();
