@@ -145,9 +145,6 @@
 </head>
 <body>
 
-  <div id="debug-content"></div>
-</div>
-
 <div id="auth-screen" class="auth-screen" style="display:flex">
   <div class="auth-box">
     <div class="logo" style="margin-bottom:12px">Actualy</div>
@@ -271,48 +268,6 @@
   </div>
 </div>
 
-<!-- TIMER CONFLICT MODAL -->
-<div id="timer-conflict-modal" class="overlay">
-  <div class="modal-box" style="max-width:460px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <span style="font-size:17px;font-weight:600">Timer Already Running</span>
-      <button onclick="closeTimerConflictModal()" style="background:none;border:none;color:#666;cursor:pointer;font-size:26px;line-height:1;padding:0 4px">×</button>
-    </div>
-    <div id="timer-conflict-message" style="font-size:14px;color:#ccc;line-height:1.6;margin-bottom:24px"></div>
-    <div style="display:flex;flex-direction:column;gap:10px">
-      <button class="mbtn-save" onclick="confirmStopAndStart()" style="background:#ef4444">
-        Stop old timer & start new one
-      </button>
-      <button class="mbtn-cancel" onclick="closeTimerConflictModal()">
-        Cancel
-      </button>
-    
-<!-- STALE TIMER MODAL -->
-<div id="stale-timer-modal" class="overlay">
-  <div class="modal-box" style="max-width:460px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <span style="font-size:17px;font-weight:600">Stale Timer Detected</span>
-      <button onclick="closeStaleTimerModal()" style="background:none;border:none;color:#666;cursor:pointer;font-size:26px;line-height:1;padding:0 4px">×</button>
-    </div>
-    <div id="stale-timer-message" style="font-size:14px;color:#ccc;line-height:1.6;margin-bottom:24px"></div>
-    <div style="display:flex;flex-direction:column;gap:10px">
-      <button class="mbtn-save" onclick="confirmDiscardAndStart()" style="background:#ef4444">
-        Discard old timer & start new
-      </button>
-      <button class="mbtn-save" onclick="confirmSaveAndStart()">
-        Save old timer (capped) & start new
-      </button>
-      <button class="mbtn-cancel" onclick="closeStaleTimerModal()">
-        Cancel
-      </button>
-    </div>
-  </div>
-</div>
-
-</div>
-  </div>
-</div>
-
 <!-- GOOGLE CALENDAR CONNECT MODAL -->
 <div id="gcal-connect-modal" class="overlay">
   <div class="modal-box" style="max-width:420px">
@@ -355,6 +310,10 @@
 </div>
 
 <script>
+// App version tracking
+const APP_VERSION = 'timer-local-stable-v1';
+console.log(`[APP VERSION] ${APP_VERSION}`);
+
 // Initialize Supabase
 const SUPABASE_URL = 'https://kodxtnmprtlbsafxizrw.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_07V1Pb-IXSLY9VSYQWs3VQ_It76Cvny';
@@ -403,49 +362,7 @@ const S = {
   plannedWeekStart: null, // First day of the displayed week
   plannedEvents: [], // Events for the selected date
   plannedDate: null, // Date object for Add Event modal
-  // Timer locking to prevent double-calls
-  startingTimer: false, // prevent simultaneous timer start calls
 };
-
-
-
-// Check if debug mode is enabled
-const DEBUG_ENABLED = new URLSearchParams(window.location.search).get('debugTimer') === '1' ||
-                      localStorage.getItem('DEBUG_TIMER') === 'true';
-
-// Debug logging for development (hidden by default)
-window.debugLog = function(msg) {
-  if (!DEBUG_ENABLED) return; // Skip all logging if debug not enabled
-
-  console.log('[DEBUG]', msg);
-
-  const panel = document.getElementById('debug-panel');
-  if (panel) {
-    panel.style.display = 'block';
-    const content = document.getElementById('debug-content');
-    if (content) {
-      const time = new Date().toLocaleTimeString();
-      const div = document.createElement('div');
-      div.textContent = `${time}: ${msg}`;
-      div.style.paddingBottom = '2px';
-      content.appendChild(div);
-      panel.scrollTop = panel.scrollHeight;
-    }
-  }
-};
-
-window.clearDebugPanel = function() {
-  const content = document.getElementById('debug-content');
-  if (content) {
-    content.innerHTML = '';
-  }
-  debugLog('Debug panel cleared');
-};
-
-// App version tracking
-const APP_VERSION = 'timer-server-v26';
-console.log(`[APP VERSION] ${APP_VERSION}`);
-console.log('[AUTH] Initializing auth...');
 
 /* ── AUTH & API ────────────────────────────────── */
 async function initAuth() {
@@ -453,14 +370,11 @@ async function initAuth() {
   if (session) {
     userSession = session;
     userToken = session.access_token;
-    console.log('[AUTH] Authenticated user ID:', session.user.id);
-    console.log('[AUTH] User email:', session.user.email);
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
     await loadTodaysEvents();
     render();
   } else {
-    console.log('[AUTH] No session found');
     document.getElementById('auth-screen').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
   }
@@ -500,7 +414,6 @@ window.logout = async function() {
 async function apiCall(method, path, body = null) {
   if (!userToken) {
     console.error('No auth token available');
-    debugLog('ERROR: No auth token available');
     throw new Error('Not authenticated');
   }
 
@@ -514,29 +427,22 @@ async function apiCall(method, path, body = null) {
   if (body) options.body = JSON.stringify(body);
 
   console.log(`API Call: ${method} ${path}`, body ? body : '');
-  debugLog(`API ${method} ${path}${body ? ` body=${JSON.stringify(body)}` : ''}`);
 
   const res = await fetch(`${API_BASE}${path}`, options);
   if (!res.ok) {
     const errorText = await res.text();
     console.error(`API error ${res.status}:`, errorText);
-    debugLog(`API ERROR ${res.status} ${method} ${path}: ${errorText.substring(0, 200)}`);
 
     // Try to parse error as JSON
     try {
       const errorJson = JSON.parse(errorText);
-      // Add status code to the error object
-      errorJson.status = res.status;
-      throw errorJson; // Throw the parsed error object (includes activeTimer, conflict, etc.)
-    } catch (parseError) {
-      // If JSON parsing fails, throw a simple error object
-      if (parseError.status) throw parseError; // Re-throw if it's already our error object
-      throw { error: `API error: ${res.status}`, message: errorText, status: res.status };
+      throw errorJson; // Throw the parsed error object
+    } catch (e) {
+      // If not JSON, throw a simple error object
+      throw { error: `API error: ${res.status}`, message: errorText };
     }
   }
-  const response = await res.json();
-  debugLog(`API ${method} ${path} SUCCESS`);
-  return response;
+  return await res.json();
 }
 
 async function loadTodaysEvents() {
@@ -586,51 +492,6 @@ function ftimer(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   return (h ? `${h}:` : '') + `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
 }
-function formatElapsed(startTime) {
-  const now = new Date();
-  const start = new Date(startTime);
-  const hours = Math.floor((now - start) / (1000 * 60 * 60));
-  const minutes = Math.floor(((now - start) % (1000 * 60 * 60)) / (1000 * 60));
-
-  if (hours >= 24) {
-    const days = Math.floor(hours / 24);
-    return `${days} day${days === 1 ? '' : 's'} ago`;
-  } else if (hours > 0) {
-    return `${hours}h ${minutes}m ago`;
-  } else {
-    return `${minutes}m ago`;
-  }
-}
-
-// Shared helper to handle 409 conflicts in modal confirmation paths
-function handleTimerConflictError(err, requestedTimerInfo) {
-  debugLog(`handleTimerConflictError: ${JSON.stringify(err)}`);
-
-  // Check if this is a 409 conflict with activeTimer
-  if (err.status === 409 && err.activeTimer) {
-    debugLog('409 Conflict in modal path - showing updated conflict modal');
-
-    // Update conflict state with the NEW active timer from server
-    S.timerConflict = {
-      oldTimer: err.activeTimer,
-      newEventId: requestedTimerInfo.newEventId,
-      newTaskName: requestedTimerInfo.newTaskName,
-      newIsUnplanned: requestedTimerInfo.newIsUnplanned,
-      createdEventId: requestedTimerInfo.createdEventId
-    };
-
-    const elapsedText = formatElapsed(err.activeTimer.startTime);
-    const conflictMessage = `"${err.activeTimer.taskName}" is now running (started ${elapsedText}).<br><br>Do you want to stop it and start "${requestedTimerInfo.newTaskName}"?`;
-
-    document.getElementById('timer-conflict-message').innerHTML = conflictMessage;
-    document.getElementById('timer-conflict-modal').classList.add('open');
-
-    return true; // Conflict handled
-  }
-
-  return false; // Not a 409 conflict, caller should show error
-}
-
 function tracked(id) { return (S.sess[id]?.secs || 0) + (S.active?.id === id ? S.elapsed : 0); }
 function actualStartMs(id) {
   if (S.active?.id === id) return S.active.startMs;
@@ -1295,512 +1156,57 @@ async function loadPlannedEvents() {
   }
 }
 
-
-/* ── SHARED CLEAN TIMER FUNCTIONS ─────────────── */
-
-// Generate unique client action ID for idempotency
-function generateClientActionId() {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-}
-
-// Fetch active timer from server
-async function fetchActiveTimer() {
-  try {
-    const data = await apiCall('GET', '/api/timer/active');
-    return data.timer || null;
-  } catch (err) {
-    console.error('[TIMER] Failed to fetch active timer:', err);
-    return null;
-  }
-}
-
-// Render active timer display with elapsed time from server timestamp
-function renderActiveTimer(timer) {
-  if (!timer) {
-    S.active = null;
-    S.elapsed = 0;
-    localStorage.removeItem('activeSession');
-    return;
-  }
-
-  const serverStartMs = new Date(timer.start_time).getTime();
-  S.active = { id: timer.event_id, startMs: serverStartMs };
-  S.elapsed = Math.floor((Date.now() - serverStartMs) / 1000);
-
-  if (!S.sess[timer.event_id]) {
-    S.sess[timer.event_id] = { secs: 0, startMs: serverStartMs };
-  }
-
-  localStorage.setItem('activeSession', JSON.stringify({
-    id: timer.event_id,
-    startMs: serverStartMs,
-    firstStart: serverStartMs
-  }));
-}
-
-// Start timer - single function for ALL timer starts
-async function startTimer({ eventId, taskName, isUnplanned = false, createdEventId = null }) {
-  debugLog(`startTimer() called: eventId=${eventId}, taskName="${taskName}", isUnplanned=${isUnplanned}`);
-
-  // Prevent double-calls
-  if (S.startingTimer) {
-    debugLog('BLOCKED: Timer start already in progress');
-    return { success: false, reason: 'already_starting' };
-  }
-
-  try {
-    S.startingTimer = true;
-    debugLog('Lock acquired: S.startingTimer = true');
-
-    // Check server for existing timer
-    const serverTimer = await fetchActiveTimer();
-
-    if (serverTimer) {
-      debugLog(`Server has active timer: eventId=${serverTimer.event_id}, taskName="${serverTimer.task_name}"`);
-
-      // Check if it's the same event we're trying to start
-      if (serverTimer.event_id === eventId) {
-        debugLog('Same event already running - recovering it');
-        renderActiveTimer(serverTimer);
-        render();
-        return {
-          success: true,
-          recovered: true,
-          message: `Timer for "${serverTimer.task_name}" is already running`
-        };
-      }
-
-      // Different event - check if stale
-      const serverStartMs = new Date(serverTimer.start_time).getTime();
-      const elapsedHours = (Date.now() - serverStartMs) / (1000 * 60 * 60);
-      const serverStartDate = new Date(serverTimer.start_time).toDateString();
-      const todayDate = new Date().toDateString();
-      const isStale = elapsedHours > 12 || serverStartDate !== todayDate;
-
-      if (isStale) {
-        debugLog(`Stale timer detected: ${elapsedHours.toFixed(1)}h old, different day: ${serverStartDate !== todayDate}`);
-        // Show stale timer modal
-        S.staleTimerConflict = {
-          oldTimer: serverTimer,
-          newEventId: eventId,
-          newTaskName: taskName,
-          newIsUnplanned: isUnplanned,
-          createdEventId: createdEventId
-        };
-
-        const elapsedText = formatElapsed(serverTimer.start_time);
-        const staleMessage = `"${serverTimer.task_name}" has been running since ${elapsedText}. This timer looks stale.<br><br>What would you like to do?`;
-
-        document.getElementById('stale-timer-message').innerHTML = staleMessage;
-        document.getElementById('stale-timer-modal').classList.add('open');
-
-        return {
-          success: false,
-          reason: 'stale_conflict_shown',
-          message: 'Stale timer modal displayed'
-        };
-      }
-
-      // Not stale - show regular conflict modal
-      debugLog('Different timer conflict - not stale');
-      S.timerConflict = {
-        oldTimer: serverTimer,
-        newEventId: eventId,
-        newTaskName: taskName,
-        newIsUnplanned: isUnplanned,
-        createdEventId: createdEventId
-      };
-
-      const elapsedText = formatElapsed(serverTimer.start_time);
-      const conflictMessage = `"${serverTimer.task_name}" is already running (started ${elapsedText}).<br><br>Do you want to stop it and start "${taskName}"?`;
-
-      document.getElementById('timer-conflict-message').innerHTML = conflictMessage;
-      document.getElementById('timer-conflict-modal').classList.add('open');
-
-      return {
-        success: false,
-        reason: 'conflict_shown',
-        message: 'Conflict modal displayed'
-      };
-    }
-
-    // No active timer - start new one
-    debugLog(`No active timer on server, starting new timer`);
-    const clientActionId = generateClientActionId();
-
-    const startData = await apiCall('POST', '/api/timer/start', {
-      eventId: eventId,
-      taskName: taskName,
-      isUnplanned: isUnplanned,
-      clientActionId: clientActionId
-    });
-
-    debugLog(`Timer started successfully: ${JSON.stringify(startData.timer || startData.activeTimer)}`);
-
-    // Update local state with server's start time
-    const timer = startData.timer || startData.activeTimer;
-    renderActiveTimer(timer);
-    render();
-
-    return { success: true, eventId: eventId };
-
-  } catch (err) {
-    debugLog(`ERROR in startTimer: ${JSON.stringify(err)}`);
-
-    // Handle 409 conflict from POST /api/timer/start
-    if (err.status === 409 && err.activeTimer) {
-      debugLog('409 Conflict detected from POST /start - checking flags');
-
-      // Same event recovery
-      if (err.sameEvent) {
-        debugLog('Same event already running - recovering it');
-        renderActiveTimer(err.activeTimer);
-        render();
-        return {
-          success: true,
-          recovered: true,
-          message: `Timer "${err.activeTimer.taskName}" is already running`
-        };
-      }
-
-      // Different event conflict - show modal
-      if (err.conflict) {
-        debugLog('Different event conflict - showing modal');
-
-        // Don't check server again - we just got this from server
-        S.timerConflict = {
-          oldTimer: err.activeTimer,
-          newEventId: eventId,
-          newTaskName: taskName,
-          newIsUnplanned: isUnplanned,
-          createdEventId: createdEventId
-        };
-
-        const elapsedText = formatElapsed(err.activeTimer.startTime);
-        const conflictMessage = `"${err.activeTimer.taskName}" is already running (started ${elapsedText}).<br><br>Do you want to stop it and start "${taskName}"?`;
-
-        document.getElementById('timer-conflict-message').innerHTML = conflictMessage;
-        document.getElementById('timer-conflict-modal').classList.add('open');
-
-        return {
-          success: false,
-          reason: 'conflict_shown',
-          message: 'Conflict modal displayed'
-        };
-      }
-    }
-
-    // If this was an unplanned task creation that failed, clean up the event
-    if (createdEventId && isUnplanned) {
-      debugLog(`Cleaning up failed unplanned event: ${createdEventId}`);
-      try {
-        await apiCall('DELETE', `/api/events/${createdEventId}`);
-        // Remove from EVS
-        const index = EVS.findIndex(e => e.id === createdEventId);
-        if (index !== -1) {
-          EVS.splice(index, 1);
-        }
-      } catch (deleteErr) {
-        debugLog(`Failed to clean up event: ${deleteErr.message || deleteErr}`);
-      }
-    }
-
-    return {
-      success: false,
-      reason: 'api_error',
-      message: err.error || err.message || 'Failed to start timer'
-    };
-
-  } finally {
-    S.startingTimer = false;
-    debugLog('Lock released: S.startingTimer = false');
-  }
-}
-
-// Stop active timer
-async function stopTimer() {
-  if (!S.active) {
-    debugLog('stopTimer() called but no active timer');
-    return { success: false, message: 'No active timer' };
-  }
-
-  if (S.saving) {
-    debugLog('stopTimer() called but already saving');
-    return { success: false, message: 'Already stopping timer' };
-  }
-
-  try {
-    S.saving = true;
-    const eventId = S.active.id;
-    const notes = S.notes[eventId] || null;
-
-    debugLog(`Stopping timer for event ${eventId}`);
-    const stopData = await apiCall('POST', '/api/timer/stop', { notes });
-
-    console.log('[TIMER] Server stopped timer, session saved:', stopData.session);
-
-    // Update session ID from server response
-    if (stopData.session && stopData.session.id) {
-      S.sessionIds[eventId] = stopData.session.id;
-    }
-
-    // Clear active session
-    localStorage.removeItem('activeSession');
-    S.active = null;
-    S.elapsed = 0;
-
-    debugLog('Timer stopped successfully');
-    return { success: true };
-
-  } catch (err) {
-    console.error('[TIMER] Failed to stop timer:', err);
-    return {
-      success: false,
-      message: err.error || err.message || 'Failed to stop timer'
-    };
-  } finally {
-    S.saving = false;
-  }
-}
-
-/* ── TIMER CONFLICT RESOLUTION ─────────────────── */
-
-// Timer conflict state
-const timerConflict = {
-  oldTimer: null,
-  newEventId: null,
-  newTaskName: null,
-  newIsUnplanned: false,
-  createdEventId: null
-};
-
-// Stale timer conflict state
-S.staleTimerConflict = {
-  oldTimer: null,
-  newEventId: null,
-  newTaskName: null,
-  newIsUnplanned: false,
-  createdEventId: null
-};
-
-S.timerConflict = timerConflict;
-
-window.closeTimerConflictModal = function() {
-  document.getElementById('timer-conflict-modal').classList.remove('open');
-  // Clean up orphaned unplanned event if any
-  if (S.timerConflict.createdEventId && S.timerConflict.newIsUnplanned) {
-    const createdId = S.timerConflict.createdEventId;
-    debugLog(`Cleaning up orphaned unplanned event: ${createdId}`);
-    apiCall('DELETE', `/api/events/${createdId}`).catch(err => {
-      debugLog(`Failed to cleanup: ${err.message}`);
-    });
-    const index = EVS.findIndex(e => e.id === createdId);
-    if (index !== -1) EVS.splice(index, 1);
-  }
-  S.timerConflict = {
-    oldTimer: null,
-    newEventId: null,
-    newTaskName: null,
-    newIsUnplanned: false,
-    createdEventId: null
-  };
-};
-
-window.confirmStopAndStart = async function() {
-  debugLog('confirmStopAndStart() called');
-  const conflict = S.timerConflict;
-  closeTimerConflictModal();
-
-  try {
-    const clientActionId = generateClientActionId();
-    const result = await apiCall('POST', '/api/timer/stop-and-start', {
-      oldTimerId: conflict.oldTimer.id,
-      newEventId: conflict.newEventId,
-      newTaskName: conflict.newTaskName,
-      newIsUnplanned: conflict.newIsUnplanned,
-      clientActionId: clientActionId
-    });
-
-    debugLog(`Stop-and-start SUCCESS`);
-    renderActiveTimer(result.activeTimer);
-    render();
-
-    alert(`Stopped "${conflict.oldTimer.taskName}" and started "${conflict.newTaskName}".`);
-
-  } catch (err) {
-    debugLog(`Stop-and-start FAILED: ${JSON.stringify(err)}`);
-
-    // Handle 409 conflict - another timer is now active
-    const conflictHandled = handleTimerConflictError(err, {
-      newEventId: conflict.newEventId,
-      newTaskName: conflict.newTaskName,
-      newIsUnplanned: conflict.newIsUnplanned,
-      createdEventId: conflict.createdEventId
-    });
-
-    if (!conflictHandled) {
-      // Not a 409 conflict, show generic error
-      alert(`Failed to stop old timer: ${err.error || err.message}`);
-    }
-  }
-};
-
-window.closeStaleTimerModal = function() {
-  document.getElementById('stale-timer-modal').classList.remove('open');
-  // Clean up orphaned unplanned event if any
-  if (S.staleTimerConflict.createdEventId && S.staleTimerConflict.newIsUnplanned) {
-    const createdId = S.staleTimerConflict.createdEventId;
-    debugLog(`Cleaning up orphaned unplanned event: ${createdId}`);
-    apiCall('DELETE', `/api/events/${createdId}`).catch(err => {
-      debugLog(`Failed to cleanup: ${err.message}`);
-    });
-    const index = EVS.findIndex(e => e.id === createdId);
-    if (index !== -1) EVS.splice(index, 1);
-  }
-  S.staleTimerConflict = {
-    oldTimer: null,
-    newEventId: null,
-    newTaskName: null,
-    newIsUnplanned: false,
-    createdEventId: null
-  };
-};
-
-window.confirmDiscardAndStart = async function() {
-  debugLog('confirmDiscardAndStart() called');
-  const conflict = S.staleTimerConflict;
-  closeStaleTimerModal();
-
-  try {
-    const clientActionId = generateClientActionId();
-    const result = await apiCall('POST', '/api/timer/stop-stale-and-start', {
-      oldTimerId: conflict.oldTimer.id,
-      newEventId: conflict.newEventId,
-      newTaskName: conflict.newTaskName,
-      newIsUnplanned: conflict.newIsUnplanned,
-      capOption: 'discard',
-      clientActionId: clientActionId
-    });
-
-    debugLog('Discard-and-start SUCCESS');
-    renderActiveTimer(result.activeTimer);
-    render();
-
-    alert(`Discarded stale timer and started "${conflict.newTaskName}".`);
-
-  } catch (err) {
-    debugLog(`Discard-and-start FAILED: ${JSON.stringify(err)}`);
-
-    // Handle 409 conflict - another timer is now active
-    const conflictHandled = handleTimerConflictError(err, {
-      newEventId: conflict.newEventId,
-      newTaskName: conflict.newTaskName,
-      newIsUnplanned: conflict.newIsUnplanned,
-      createdEventId: conflict.createdEventId
-    });
-
-    if (!conflictHandled) {
-      // Not a 409 conflict, show generic error
-      alert(`Failed: ${err.error || err.message}`);
-    }
-  }
-};
-
-window.confirmSaveAndStart = async function() {
-  debugLog('confirmSaveAndStart() called');
-  const conflict = S.staleTimerConflict;
-  closeStaleTimerModal();
-
-  try {
-    const clientActionId = generateClientActionId();
-    const result = await apiCall('POST', '/api/timer/stop-stale-and-start', {
-      oldTimerId: conflict.oldTimer.id,
-      newEventId: conflict.newEventId,
-      newTaskName: conflict.newTaskName,
-      newIsUnplanned: conflict.newIsUnplanned,
-      capOption: 'save_capped',
-      clientActionId: clientActionId
-    });
-
-    debugLog('Save-capped-and-start SUCCESS');
-    renderActiveTimer(result.activeTimer);
-    render();
-
-    alert(`Saved stale timer (capped) and started "${conflict.newTaskName}".`);
-
-  } catch (err) {
-    debugLog(`Save-capped-and-start FAILED: ${JSON.stringify(err)}`);
-
-    // Handle 409 conflict - another timer is now active
-    const conflictHandled = handleTimerConflictError(err, {
-      newEventId: conflict.newEventId,
-      newTaskName: conflict.newTaskName,
-      newIsUnplanned: conflict.newIsUnplanned,
-      createdEventId: conflict.createdEventId
-    });
-
-    if (!conflictHandled) {
-      // Not a 409 conflict, show generic error
-      alert(`Failed: ${err.error || err.message}`);
-    }
-  }
-};
-
-/* ── TIMER TOGGLE (START/STOP) ──────────────────── */
 window.tog = async id => {
-  console.log('[TIMER] tog() called for event:', id);
-  debugLog(`tog() called for event ${id}`);
-
+  // Prevent double-clicking from saving twice
   if (S.saving) return;
 
   S.openMenu = null;
-
   if (S.active?.id === id) {
-    // STOPPING timer
-    console.log(`[TIMER] Stopping timer for event ${id}`);
+    // Stopping timer - save session to backend
+    S.saving = true; // Block further clicks
+    const secs = Math.floor((Date.now() - S.active.startMs) / 1000);
+    const prev = S.sess[id]?.secs || 0;
+    const firstStart = S.sess[id]?.startMs || S.active.startMs;
+    S.sess[id] = { secs: prev + secs, startMs: firstStart };
 
-    const result = await stopTimer();
+    // Save to backend
+    try {
+      const event = EVS.find(e => e.id === id);
+      const sessionData = await apiCall('POST', '/api/sessions', {
+        event_id: id,
+        actual_start_time: new Date(firstStart).toISOString(),
+        duration_seconds: prev + secs,
+        notes: S.notes[id] || null
+      });
+      S.sessionIds[id] = sessionData.session.id;
 
-    if (!result.success) {
-      alert(`Failed to stop timer: ${result.message}`);
-      return;
+      // Clear active session from localStorage
+      localStorage.removeItem('activeSession');
+    } catch (err) {
+      console.error('Failed to save session:', err);
+    } finally {
+      S.saving = false; // Re-enable clicking
     }
 
-    console.log(`[TIMER] Timer stopped successfully for event ${id}`);
+    S.active = null; S.elapsed = 0;
   } else {
-    // STARTING timer
-    debugLog(`tog(): Starting timer for event ${id}`);
-
-    const event = EVS.find(e => e.id === id);
-    if (!event) {
-      debugLog(`ERROR: Event ${id} not found in EVS`);
-      alert('Event not found');
-      return;
+    if (S.active) {
+      const secs = Math.floor((Date.now() - S.active.startMs) / 1000);
+      const prev = S.sess[S.active.id]?.secs || 0;
+      const firstStart = S.sess[S.active.id]?.startMs || S.active.startMs;
+      S.sess[S.active.id] = { secs: prev + secs, startMs: firstStart };
     }
+    S.active = { id, startMs: Date.now() }; S.elapsed = 0;
 
-    const result = await startTimer({
-      eventId: id,
-      taskName: event.n,
-      isUnplanned: event.isUnplanned || false
-    });
-
-    if (!result.success) {
-      if (result.reason !== 'conflict_shown' && result.reason !== 'stale_conflict_shown') {
-        alert(result.message || 'Failed to start timer');
-      }
-      return;
-    }
-
-    if (result.recovered) {
-      debugLog(`Timer recovered: ${result.message}`);
-    } else {
-      debugLog(`Timer started successfully for event ${id}`);
-    }
+    // Save active session to localStorage for recovery
+    localStorage.setItem('activeSession', JSON.stringify({
+      id,
+      startMs: Date.now(),
+      firstStart: S.sess[id]?.startMs || Date.now()
+    }));
   }
-
   render();
 };
-
 
 /* ── DROPDOWN MENU ────────────────────────────── */
 window.toggleMenu = function(ev, id) {
@@ -2075,10 +1481,8 @@ window.startUnplannedTask = async function() {
   const endTime = new Date(startTime);
   endTime.setHours(endTime.getHours() + 1);
 
-  let createdEventId = null;
-
+  // Save to backend with is_unplanned flag
   try {
-    // Save to backend with is_unplanned flag
     const eventData = await apiCall('POST', '/api/events', {
       name,
       start_time: startTime.toISOString(),
@@ -2087,15 +1491,16 @@ window.startUnplannedTask = async function() {
       is_unplanned: true
     });
 
-    createdEventId = eventData.event.id;
     const sh = startTime.getHours();
     const sm = startTime.getMinutes();
     const eh = endTime.getHours();
     const em = endTime.getMinutes();
 
-    // Add to EVS temporarily
+    // Create a temporary event object for tracking purposes only
+    // This is NOT added to EVS (which is for planned events)
+    // Instead, we create it on-demand during tracking
     const unplannedEvent = {
-      id: createdEventId,
+      id: eventData.event.id,
       n: name,
       sh, sm, eh, em,
       fill: c.fill,
@@ -2104,66 +1509,18 @@ window.startUnplannedTask = async function() {
       isUnplanned: true
     };
 
+    // Add to EVS temporarily so the tracking system can find it
+    // But it will be filtered out of planned timeline rendering
     EVS.push(unplannedEvent);
     EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
 
-    debugLog(`Unplanned task created: eventId=${createdEventId}, name="${name}"`);
-
-    // Start timer using shared function
-    const result = await startTimer({
-      eventId: createdEventId,
-      taskName: name,
-      isUnplanned: true,
-      createdEventId: createdEventId
-    });
-
-    if (!result.success) {
-      debugLog(`Unplanned timer start FAILED: reason=${result.reason}`);
-
-      // If not showing a modal, we need to handle cleanup and show error
-      if (result.reason !== 'conflict_shown' && result.reason !== 'stale_conflict_shown') {
-        // Remove the event from EVS
-        const index = EVS.findIndex(e => e.id === createdEventId);
-        if (index !== -1) {
-          debugLog(`Removing failed unplanned event from EVS`);
-          EVS.splice(index, 1);
-        }
-
-        // Try to delete the event from server
-        try {
-          await apiCall('DELETE', `/api/events/${createdEventId}`);
-          debugLog(`Cleaned up orphaned event from server`);
-        } catch (deleteError) {
-          debugLog(`Failed to clean up orphaned event: ${deleteError.message || deleteError}`);
-        }
-
-        err.textContent = result.message || 'Failed to start timer';
-        return;
-      }
-
-      // Modal is showing - cleanup will happen when modal closes or confirms
-      return;
-    }
-
-    // Success
-    debugLog(`Unplanned timer started successfully`);
     closeUnplannedModal();
     render();
 
+    // Immediately start tracking
+    await tog(eventData.event.id);
   } catch (error) {
-    console.error('[TIMER] Failed to create unplanned task:', error);
-
-    // Clean up if event was created
-    if (createdEventId) {
-      try {
-        await apiCall('DELETE', `/api/events/${createdEventId}`);
-        const index = EVS.findIndex(e => e.id === createdEventId);
-        if (index !== -1) EVS.splice(index, 1);
-      } catch (deleteError) {
-        // Ignore cleanup errors
-      }
-    }
-
+    console.error('Failed to create unplanned task:', error);
     err.textContent = 'Failed to create task. Please try again.';
   }
 };
@@ -2771,192 +2128,73 @@ window.confirmGcalConnect = async function() {
 };
 
 /* ── SESSION RECOVERY & AUTO-SAVE ────────────── */
-// Recover active timer from server on page load (server is source of truth)
+// Recover active session from localStorage on page load
 async function recoverActiveSession() {
-  console.log('[TIMER] Recovery: fetching /api/timer/active on page load...');
-  debugLog('RECOVERY: Checking server for active timer on page load');
-
   try {
-    // Fetch from server (source of truth)
-    const serverTimer = await fetchActiveTimer();
+    const saved = localStorage.getItem('activeSession');
+    if (!saved) return;
 
-    if (serverTimer) {
-      console.log('[TIMER] Recovery: server has active timer');
-      debugLog(`RECOVERY: Server timer found: eventId=${serverTimer.event_id}`);
+    const { id, startMs, firstStart, eventName } = JSON.parse(saved);
+    const elapsed = Math.floor((Date.now() - startMs) / 1000);
 
-      const eventId = serverTimer.event_id;
-
-      // Check if event exists in EVS
-      let event = EVS.find(e => e.id === eventId);
-
-      // If not in EVS, fetch it (for unplanned tasks)
-      if (!event) {
-        try {
-          const eventData = await apiCall('GET', `/api/events/${eventId}`);
-          if (eventData.event) {
-            const e = eventData.event;
-            const start = new Date(e.start_time);
-            const end = new Date(e.end_time);
-            let colorIdx = COLORS.findIndex(c => c.bdr === e.color);
-            if (colorIdx === -1) colorIdx = 1;
-
-            event = {
-              id: e.id,
-              n: e.name,
-              sh: start.getHours(),
-              sm: start.getMinutes(),
-              eh: end.getHours(),
-              em: end.getMinutes(),
-              fill: COLORS[colorIdx].fill,
-              bdr: e.color,
-              bar: COLORS[colorIdx].bar,
-              synced: e.synced_from_calendar || false,
-              isUnplanned: e.is_unplanned || false
-            };
-
-            EVS.push(event);
-            EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
-            console.log(`[TIMER] Fetched and added event ${eventId} to EVS`);
-          }
-        } catch (err) {
-          console.error(`[TIMER] Failed to fetch event ${eventId}:`, err);
-          return;
-        }
-      }
-
-      // Recover the active timer
-      if (event) {
-        renderActiveTimer(serverTimer);
-        const elapsed = Math.floor((Date.now() - new Date(serverTimer.start_time).getTime()) / 1000);
-        console.log(`[TIMER] Recovered timer for event ${eventId}, elapsed: ${elapsed}s`);
-      }
+    // Session must be less than 24 hours old
+    if (elapsed >= 86400) {
+      localStorage.removeItem('activeSession');
       return;
     }
 
-    // Server has no timer - clear any stale localStorage
-    console.log('[TIMER] Recovery: No active timer on server');
-    const saved = localStorage.getItem('activeSession');
-    if (saved) {
-      console.log('[TIMER] Recovery: Clearing stale localStorage (server is source of truth)');
+    // Check if event exists in EVS (for planned events)
+    let event = EVS.find(e => e.id === id);
+
+    // If not in EVS, try to fetch it (for unplanned tasks)
+    if (!event) {
+      try {
+        const data = await apiCall('GET', `/api/events/${id}`);
+        if (data.event) {
+          const e = data.event;
+          const start = new Date(e.start_time);
+          const end = new Date(e.end_time);
+          let colorIdx = COLORS.findIndex(c => c.bdr === e.color);
+          if (colorIdx === -1) colorIdx = 1;
+
+          event = {
+            id: e.id,
+            n: e.name,
+            sh: start.getHours(),
+            sm: start.getMinutes(),
+            eh: end.getHours(),
+            em: end.getMinutes(),
+            fill: COLORS[colorIdx].fill,
+            bdr: e.color,
+            bar: COLORS[colorIdx].bar,
+            synced: e.synced_from_calendar || false,
+            isUnplanned: e.is_unplanned || false
+          };
+
+          // Add to EVS so it appears in Track tab
+          EVS.push(event);
+          EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
+        }
+      } catch (err) {
+        console.error(`Failed to fetch event ${id} for session recovery:`, err);
+        localStorage.removeItem('activeSession');
+        return;
+      }
+    }
+
+    // Recover the active session
+    if (event) {
+      S.active = { id, startMs };
+      S.sess[id] = { secs: 0, startMs: firstStart };
+      S.elapsed = elapsed;
+      console.log(`Recovered active session for event ${id} (${event.isUnplanned ? 'unplanned' : 'planned'}), elapsed: ${elapsed}s`);
+    } else {
       localStorage.removeItem('activeSession');
     }
-    S.active = null;
-    S.elapsed = 0;
-
   } catch (err) {
-    console.error('[TIMER] Failed to recover session:', err);
+    console.error('Failed to recover session:', err);
     localStorage.removeItem('activeSession');
   }
-}
-
-/* ── TIMER POLLING & HEARTBEAT ───────────────── */
-// Poll server every 5 seconds to sync active timer state (cross-device sync)
-async function fetchAndSyncActiveTimer() {
-  try {
-    console.log('[TIMER] Polling: fetching /api/timer/active...');
-    const serverTimer = await fetchActiveTimer();
-
-    console.log('[TIMER] Polling: response received', {
-      hasActiveTimer: !!serverTimer,
-      serverTimer: serverTimer?.event_id || null,
-      localTimer: S.active?.id || null
-    });
-
-    // Case 1: Server has active timer
-    if (serverTimer) {
-      const serverEventId = serverTimer.event_id;
-      const serverStartTime = new Date(serverTimer.start_time).getTime();
-
-      // Case 1a: Local has no active timer - restore it (cross-device sync)
-      if (!S.active) {
-        console.log(`[TIMER] Polling Case 1a: Server has timer, local doesn't - restoring (cross-device sync)`);
-
-        // Check if event exists in EVS
-        let event = EVS.find(e => e.id === serverEventId);
-
-        // If not in EVS, fetch it
-        if (!event) {
-          try {
-            const eventData = await apiCall('GET', `/api/events/${serverEventId}`);
-            if (eventData.event) {
-              const e = eventData.event;
-              const start = new Date(e.start_time);
-              const end = new Date(e.end_time);
-              let colorIdx = COLORS.findIndex(c => c.bdr === e.color);
-              if (colorIdx === -1) colorIdx = 1;
-
-              event = {
-                id: e.id,
-                n: e.name,
-                sh: start.getHours(),
-                sm: start.getMinutes(),
-                eh: end.getHours(),
-                em: end.getMinutes(),
-                fill: COLORS[colorIdx].fill,
-                bdr: e.color,
-                bar: COLORS[colorIdx].bar,
-                synced: e.synced_from_calendar || false,
-                isUnplanned: e.is_unplanned || false
-              };
-
-              EVS.push(event);
-              EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
-            }
-          } catch (err) {
-            console.error(`[TIMER] Polling: failed to fetch event ${serverEventId}:`, err);
-            return;
-          }
-        }
-
-        // Restore local timer from server
-        renderActiveTimer(serverTimer);
-        render();
-      }
-      // Case 1b: Local has different timer - server wins (cross-device sync)
-      else if (S.active.id !== serverEventId) {
-        console.log(`[TIMER] Polling Case 1b: Server has different timer - server wins (cross-device sync)`);
-        renderActiveTimer(serverTimer);
-        render();
-      }
-      // Case 1c: Same timer, update start time if different
-      else if (S.active.startMs !== serverStartTime) {
-        console.log(`[TIMER] Polling Case 1c: Same timer, adjusting start time`);
-        S.active.startMs = serverStartTime;
-        S.elapsed = Math.floor((Date.now() - serverStartTime) / 1000);
-      }
-    }
-    // Case 2: Server has no timer but local does - clear local (cross-device sync)
-    else if (S.active) {
-      console.log(`[TIMER] Polling Case 2: Server has no timer but local does - clearing (cross-device sync)`);
-      S.active = null;
-      S.elapsed = 0;
-      localStorage.removeItem('activeSession');
-      render();
-    }
-  } catch (err) {
-    console.error('[TIMER] Polling failed:', err);
-  }
-}
-
-// Send heartbeat every 30 seconds if timer is active
-async function sendHeartbeat() {
-  if (!S.active) return;
-
-  try {
-    await apiCall('POST', '/api/timer/heartbeat', {});
-    console.log(`[TIMER] Heartbeat sent for event ${S.active.id}`);
-  } catch (err) {
-    console.error('[TIMER] Heartbeat failed:', err);
-  }
-}
-
-// Check polling status for debugging
-function checkPollingStatus() {
-  console.log('[TIMER] Polling status check:', {
-    activeTimerId: S.active?.id || null,
-    pollingInterval: 'every 5 seconds',
-    heartbeatInterval: 'every 30 seconds'
-  });
 }
 
 // Auto-save active session every 5 seconds
@@ -2984,17 +2222,6 @@ initAuth().then(async () => {
   await recoverActiveSession();
   render();
   startAutoSave();
-
-  // Start polling server for active timer every 5 seconds
-  console.log('[TIMER] Starting polling interval (every 5 seconds)');
-  setInterval(fetchAndSyncActiveTimer, 5000);
-
-  // Start heartbeat every 30 seconds
-  console.log('[TIMER] Starting heartbeat interval (every 30 seconds)');
-  setInterval(sendHeartbeat, 30000);
-
-  // Check polling status after 10 seconds
-  setTimeout(checkPollingStatus, 10000);
 });
 
 /* ── SERVICE WORKER REGISTRATION ──────────────── */

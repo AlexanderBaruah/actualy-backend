@@ -11,7 +11,6 @@ const supabase = require('./supabase');
 const eventsRouter = require('./routes/events');
 const sessionsRouter = require('./routes/sessions');
 const calendarRouter = require('./routes/calendar');
-const timerRouter = require('./routes/timer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,7 +35,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/events', eventsRouter);
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/calendar', calendarRouter);
-app.use('/api/timer', timerRouter);
 
 // Export endpoint - returns all events and sessions for download
 const { authenticateUser } = require('./middleware/auth');
