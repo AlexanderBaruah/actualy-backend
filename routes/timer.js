@@ -318,14 +318,12 @@ router.post('/stop', async (req, res) => {
     });
 
     // Create session
-    const { data: session, error: sessionError } = await req.supabase
+    const { data: session, error: sessionError} = await req.supabase
       .from('sessions')
       .insert({
         user_id: req.user.id,
         event_id: activeTimer.event_id,
         actual_start_time: activeTimer.start_time,
-        actual_end_time: endTime.toISOString(),
-        duration_minutes: durationMinutes,
         duration_seconds: durationSeconds,
         notes: notes || null
       })
@@ -357,8 +355,7 @@ router.post('/stop', async (req, res) => {
         id: session.id,
         eventId: session.event_id,
         startTime: session.actual_start_time,
-        endTime: session.actual_end_time,
-        durationMinutes: session.duration_minutes,
+        durationSeconds: session.duration_seconds,
         notes: session.notes
       }
     });
@@ -430,15 +427,13 @@ router.post('/stop-stale-and-start', async (req, res) => {
           user_id: req.user.id,
           event_id: oldTimer.event_id,
           actual_start_time: oldTimer.start_time,
-          actual_end_time: endTime.toISOString(),
-          duration_minutes: durationMinutes,
           duration_seconds: durationSeconds,
           notes: 'Stale timer - capped duration'
         });
 
       if (sessionError) {
         console.error('[POST /stop-stale-and-start] Error saving session:', sessionError);
-        return res.status(500).json({ error: 'Failed to save session' });
+        return res.status(500).json({ error: 'Failed to save session', details: sessionError.message });
       }
 
       console.log('[POST /stop-stale-and-start] Capped session saved');
@@ -544,15 +539,13 @@ router.post('/stop-and-start', async (req, res) => {
         user_id: req.user.id,
         event_id: oldTimer.event_id,
         actual_start_time: oldTimer.start_time,
-        actual_end_time: endTime.toISOString(),
-        duration_minutes: durationMinutes,
         duration_seconds: durationSeconds,
         notes: null
       });
 
     if (sessionError) {
       console.error('[POST /stop-and-start] Error creating session:', sessionError);
-      return res.status(500).json({ error: 'Failed to save session' });
+      return res.status(500).json({ error: 'Failed to save session', details: sessionError.message });
     }
 
     console.log('[POST /stop-and-start] Old session saved');
