@@ -1,10 +1,8 @@
 // Service Worker for Actualy PWA
-// Simple cache-first strategy for fast loading
+// Network-first for HTML, cache-first for static assets
 
-const CACHE_NAME = 'actualy-v21';
+const CACHE_NAME = 'actualy-v22';
 const urlsToCache = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icon-180.png',
   '/icon-192.png',
@@ -39,20 +37,43 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Fetch event - serve from cache, fallback to network
+// Fetch event - network-first for HTML, cache-first for static assets
 self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+
   // NEVER cache API requests - always fetch from network
-  if (event.request.url.includes('/api/')) {
+  if (url.pathname.startsWith('/api/')) {
     event.respondWith(fetch(event.request));
     return;
   }
 
-  // For non-API requests, use cache-first strategy
+  // Network-first for HTML (index.html, /) to prevent stale HTML trap
+  if (url.pathname === '/' || url.pathname === '/index.html' || event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          // Successfully fetched from network, return fresh HTML
+          return response;
+        })
+        .catch(() => {
+          // Network failed, fall back to cached version if available
+          return caches.match('/index.html')
+            .then(cached => cached || new Response('Offline', { status: 503 }));
+        })
+    );
+    return;
+  }
+
+  // Cache-first for static assets (icons, manifest)
   event.respondWith(
     caches.match(event.request)
       .then(response => {
-        // Return cached version or fetch from network
-        return response || fetch(event.request).then(fetchResponse => {
+        if (response) {
+          return response; // Return cached version
+        }
+
+        // Not in cache, fetch from network
+        return fetch(event.request).then(fetchResponse => {
           // Don't cache external resources
           if (!event.request.url.startsWith(self.location.origin)) {
             return fetchResponse;
@@ -64,12 +85,6 @@ self.addEventListener('fetch', event => {
             return fetchResponse;
           });
         });
-      })
-      .catch(() => {
-        // Offline fallback for HTML pages
-        if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
       })
   );
 });
