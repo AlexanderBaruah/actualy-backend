@@ -6,7 +6,7 @@ const { authenticateUser } = require('../middleware/auth');
 router.use(authenticateUser);
 
 /**
- * Helper: Check if a timer is stale (from a different day or >12 hours old)
+ * Helper: Check if a timer is stale (from a different Pacific day or >12 hours old)
  */
 function isStaleTimer(startTime) {
   const start = new Date(startTime);
@@ -23,17 +23,10 @@ function isStaleTimer(startTime) {
 }
 
 /**
- * Shared helper: Get active timer for user with consistent stale timer handling
- * This ensures all endpoints agree on what "active" means
- *
- * @param {Object} supabase - Supabase client
- * @param {String} userId - User ID
- * @param {Boolean} autoResolveStale - If true, automatically resolve stale timers
- * @returns {Object} { timer: activeTimer or null, wasStale: boolean, resolved: boolean }
+ * Shared helper: Get active timer for user
+ * SINGLE SOURCE OF TRUTH - used by all endpoints
  */
-async function getActiveTimer(supabase, userId, autoResolveStale = false) {
-  console.log('[getActiveTimer] Fetching for user:', userId, 'autoResolve:', autoResolveStale);
-
+async function getActiveTimerForUser(supabase, userId) {
   const { data: timer, error } = await supabase
     .from('active_timers')
     .select('*')
@@ -41,111 +34,70 @@ async function getActiveTimer(supabase, userId, autoResolveStale = false) {
     .maybeSingle();
 
   if (error) {
-    console.error('[getActiveTimer] Error:', error);
+    console.error('[getActiveTimer] Database error:', error);
     throw error;
   }
 
-  if (!timer) {
-    console.log('[getActiveTimer] No active timer found');
-    return { timer: null, wasStale: false, resolved: false };
-  }
+  return timer; // Returns null if no active timer
+}
 
-  // Check if stale
-  const isStale = isStaleTimer(timer.start_time);
-  console.log('[getActiveTimer] Timer found:', timer.id, 'isStale:', isStale);
+/**
+ * Helper: Calculate capped end time for stale timer
+ */
+async function calculateCappedEndTime(supabase, timer) {
+  const startTime = new Date(timer.start_time);
+  let endTime;
 
-  if (isStale && autoResolveStale) {
-    // Auto-resolve stale timer
-    console.log('[getActiveTimer] Auto-resolving stale timer:', timer.id);
+  if (timer.event_id) {
+    // Try to get scheduled end_time
+    const { data: eventData } = await supabase
+      .from('events')
+      .select('end_time')
+      .eq('id', timer.event_id)
+      .maybeSingle();
 
-    // Calculate stop time
-    const startTime = new Date(timer.start_time);
-    let endTime;
-
-    if (timer.event_id) {
-      // Try to get scheduled end_time
-      const { data: eventData } = await supabase
-        .from('events')
-        .select('end_time')
-        .eq('id', timer.event_id)
-        .maybeSingle();
-
-      if (eventData && eventData.end_time) {
-        endTime = new Date(eventData.end_time);
-        console.log('[getActiveTimer] Using scheduled end time:', endTime.toISOString());
-      } else {
-        // Cap at +4 hours
-        endTime = new Date(startTime.getTime() + 4 * 60 * 60 * 1000);
-        console.log('[getActiveTimer] Capping at +4 hours:', endTime.toISOString());
-      }
+    if (eventData && eventData.end_time) {
+      endTime = new Date(eventData.end_time);
+      console.log('[calculateCappedEndTime] Using scheduled end time:', endTime.toISOString());
     } else {
-      // Unplanned, cap at +4 hours
+      // Cap at +4 hours
       endTime = new Date(startTime.getTime() + 4 * 60 * 60 * 1000);
-      console.log('[getActiveTimer] Unplanned, capping at +4 hours:', endTime.toISOString());
+      console.log('[calculateCappedEndTime] No scheduled end time, capping at +4 hours');
     }
-
-    const durationMinutes = Math.max(1, Math.round((endTime - startTime) / 60000));
-    const durationSeconds = Math.max(60, Math.round((endTime - startTime) / 1000));
-
-    // Create session
-    try {
-      await supabase
-        .from('sessions')
-        .insert({
-          user_id: userId,
-          event_id: timer.event_id,
-          actual_start_time: timer.start_time,
-          actual_end_time: endTime.toISOString(),
-          duration_minutes: durationMinutes,
-          duration_seconds: durationSeconds,
-          notes: 'Auto-resolved stale timer'
-        });
-
-      console.log('[getActiveTimer] Session created for stale timer');
-    } catch (sessionError) {
-      console.error('[getActiveTimer] Failed to create session:', sessionError);
-    }
-
-    // Delete active_timers row
-    await supabase
-      .from('active_timers')
-      .delete()
-      .eq('id', timer.id);
-
-    console.log('[getActiveTimer] Stale timer resolved and deleted');
-    return { timer: null, wasStale: true, resolved: true };
+  } else {
+    // Unplanned, cap at +4 hours
+    endTime = new Date(startTime.getTime() + 4 * 60 * 60 * 1000);
+    console.log('[calculateCappedEndTime] Unplanned task, capping at +4 hours');
   }
 
-  // Return active timer (not stale or not auto-resolving)
-  return { timer: timer, wasStale: isStale, resolved: false };
+  return endTime;
 }
 
 /**
  * GET /api/timer/active
  * Get the currently active timer for the authenticated user
- * Returns null if no timer is active
  */
 router.get('/active', async (req, res) => {
   try {
-    console.log('[GET /api/timer/active] Fetching active timer for user:', req.user.id);
+    console.log('[GET /active] User:', req.user.id);
 
-    const { timer, wasStale, resolved } = await getActiveTimer(req.supabase, req.user.id, false);
+    const timer = await getActiveTimerForUser(req.supabase, req.user.id);
 
     if (!timer) {
-      console.log('[GET /api/timer/active] No active timer found', wasStale ? '(was stale)' : '');
       return res.json({ activeTimer: null });
     }
 
-    // Calculate elapsed time
+    // Calculate elapsed time using server timestamp math
     const startTime = new Date(timer.start_time);
     const now = new Date();
     const elapsedSeconds = Math.floor((now - startTime) / 1000);
+    const isStale = isStaleTimer(timer.start_time);
 
-    console.log('[GET /api/timer/active] Active timer found:', {
+    console.log('[GET /active] Active timer:', {
       id: timer.id,
       task: timer.task_name,
       elapsed: elapsedSeconds,
-      isUnplanned: timer.is_unplanned
+      isStale
     });
 
     res.json({
@@ -156,92 +108,118 @@ router.get('/active', async (req, res) => {
         isUnplanned: timer.is_unplanned,
         startTime: timer.start_time,
         elapsedSeconds: elapsedSeconds,
+        isStale: isStale,
         lastHeartbeat: timer.last_heartbeat
       }
     });
   } catch (error) {
-    console.error('[GET /api/timer/active] Server error:', error);
+    console.error('[GET /active] Error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 /**
  * POST /api/timer/start
- * Start a new timer (or fail if one is already active)
- * Body: { eventId?, taskName, isUnplanned? }
+ * Start a new timer (idempotent with clientActionId)
+ * Body: { eventId?, taskName, isUnplanned?, clientActionId }
  */
 router.post('/start', async (req, res) => {
   try {
-    const { eventId, taskName, isUnplanned } = req.body;
+    const { eventId, taskName, isUnplanned, clientActionId } = req.body;
 
     if (!taskName) {
       return res.status(400).json({ error: 'taskName is required' });
     }
 
-    console.log('[POST /api/timer/start] Starting timer:', {
+    if (!clientActionId) {
+      return res.status(400).json({ error: 'clientActionId is required for idempotency' });
+    }
+
+    console.log('[POST /start] Request:', {
       user: req.user.id,
       eventId,
       taskName,
-      isUnplanned: isUnplanned || false
+      isUnplanned: isUnplanned || false,
+      clientActionId
     });
 
-    // Use shared helper with auto-resolve for stale timers
-    const { timer: existing, wasStale, resolved } = await getActiveTimer(req.supabase, req.user.id, true);
+    // IDEMPOTENCY CHECK: Look for existing timer with this clientActionId
+    const { data: existingByActionId } = await req.supabase
+      .from('active_timers')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .eq('client_action_id', clientActionId)
+      .maybeSingle();
 
-    if (resolved) {
-      console.log('[POST /api/timer/start] Stale timer was auto-resolved, proceeding with start');
-      // Continue to create new timer below
-    } else if (existing) {
-      console.log('[POST /api/timer/start] Timer already active:', existing.id);
+    if (existingByActionId) {
+      console.log('[POST /start] IDEMPOTENT: Returning existing timer for clientActionId:', clientActionId);
+      const elapsedSeconds = Math.floor((Date.now() - new Date(existingByActionId.start_time)) / 1000);
+      return res.status(200).json({
+        activeTimer: {
+          id: existingByActionId.id,
+          eventId: existingByActionId.event_id,
+          taskName: existingByActionId.task_name,
+          isUnplanned: existingByActionId.is_unplanned,
+          startTime: existingByActionId.start_time,
+          elapsedSeconds: elapsedSeconds
+        },
+        idempotent: true
+      });
+    }
+
+    // Check for existing active timer (from getActiveTimerForUser - SINGLE SOURCE OF TRUTH)
+    const existing = await getActiveTimerForUser(req.supabase, req.user.id);
+
+    if (existing) {
+      const isStale = isStaleTimer(existing.start_time);
+      const elapsedHours = (Date.now() - new Date(existing.start_time)) / (1000 * 60 * 60);
+
+      console.log('[POST /start] Active timer exists:', {
+        id: existing.id,
+        task: existing.task_name,
+        isStale,
+        elapsedHours: elapsedHours.toFixed(2)
+      });
 
       // Same event - return existing timer (recovery)
       if (existing.event_id === eventId) {
-        console.log('[POST /api/timer/start] Same event, returning existing timer');
-        const startTime = new Date(existing.start_time);
-        const now = new Date();
-        const elapsedHours = (now - startTime) / (1000 * 60 * 60);
-
+        console.log('[POST /start] Same event - returning existing timer');
+        const elapsedSeconds = Math.floor((Date.now() - new Date(existing.start_time)) / 1000);
         return res.status(409).json({
           error: 'Timer already active',
+          sameEvent: true,
           activeTimer: {
             id: existing.id,
             eventId: existing.event_id,
             taskName: existing.task_name,
             isUnplanned: existing.is_unplanned,
             startTime: existing.start_time,
-            elapsedHours: elapsedHours,
-            isStale: wasStale
+            elapsedSeconds: elapsedSeconds,
+            isStale: isStale
           }
         });
       }
 
-      // Different event - return 409 for conflict resolution
-      const startTime = new Date(existing.start_time);
-      const now = new Date();
-      const elapsedHours = (now - startTime) / (1000 * 60 * 60);
-
-      console.log('[POST /api/timer/start] Different event conflict:', {
-        existing: existing.event_id,
-        requested: eventId,
-        elapsedHours: elapsedHours.toFixed(2),
-        isStale: wasStale
-      });
-
+      // Different event - return conflict for user decision
+      console.log('[POST /start] Different event - returning conflict');
+      const elapsedSeconds = Math.floor((Date.now() - new Date(existing.start_time)) / 1000);
       return res.status(409).json({
         error: 'Timer already active',
+        conflict: true,
         activeTimer: {
           id: existing.id,
           eventId: existing.event_id,
           taskName: existing.task_name,
           isUnplanned: existing.is_unplanned,
           startTime: existing.start_time,
-          elapsedHours: elapsedHours,
-          isStale: wasStale
+          elapsedSeconds: elapsedSeconds,
+          isStale: isStale,
+          elapsedHours: elapsedHours
         }
       });
     }
 
-    // No active timer or stale timer resolved - create new timer
+    // No active timer - create new one
     const startTime = new Date().toISOString();
     const { data, error } = await req.supabase
       .from('active_timers')
@@ -251,17 +229,18 @@ router.post('/start', async (req, res) => {
         task_name: taskName,
         is_unplanned: isUnplanned || false,
         start_time: startTime,
-        last_heartbeat: startTime
+        last_heartbeat: startTime,
+        client_action_id: clientActionId
       })
       .select()
       .single();
 
     if (error) {
-      console.error('[POST /api/timer/start] Error creating active timer:', error);
+      console.error('[POST /start] Error creating timer:', error);
       return res.status(500).json({ error: 'Failed to start timer', details: error.message });
     }
 
-    console.log('[POST /api/timer/start] Timer started successfully:', data.id);
+    console.log('[POST /start] Timer started:', data.id);
 
     res.status(201).json({
       activeTimer: {
@@ -274,7 +253,7 @@ router.post('/start', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('[POST /api/timer/start] Server error:', error);
+    console.error('[POST /start] Error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -288,28 +267,27 @@ router.post('/stop', async (req, res) => {
   try {
     const { notes } = req.body;
 
-    console.log('[POST /api/timer/stop] Stopping timer for user:', req.user.id);
+    console.log('[POST /stop] User:', req.user.id);
 
-    const { timer: activeTimer, wasStale } = await getActiveTimer(req.supabase, req.user.id, false);
+    const activeTimer = await getActiveTimerForUser(req.supabase, req.user.id);
 
     if (!activeTimer) {
-      console.log('[POST /api/timer/stop] No active timer found');
+      console.log('[POST /stop] No active timer found');
       return res.status(404).json({ error: 'No active timer found' });
     }
 
     const startTime = new Date(activeTimer.start_time);
     const endTime = new Date();
     const durationMinutes = Math.max(1, Math.round((endTime - startTime) / 60000));
+    const durationSeconds = Math.max(60, Math.round((endTime - startTime) / 1000));
 
-    console.log('[POST /api/timer/stop] Timer details:', {
-      timerId: activeTimer.id,
-      eventId: activeTimer.event_id,
+    console.log('[POST /stop] Stopping timer:', {
+      id: activeTimer.id,
       task: activeTimer.task_name,
-      duration: durationMinutes,
-      isUnplanned: activeTimer.is_unplanned
+      duration: durationMinutes
     });
 
-    // Create session record
+    // Create session
     const { data: session, error: sessionError } = await req.supabase
       .from('sessions')
       .insert({
@@ -318,30 +296,30 @@ router.post('/stop', async (req, res) => {
         actual_start_time: activeTimer.start_time,
         actual_end_time: endTime.toISOString(),
         duration_minutes: durationMinutes,
+        duration_seconds: durationSeconds,
         notes: notes || null
       })
       .select()
       .single();
 
     if (sessionError) {
-      console.error('[POST /api/timer/stop] Error creating session:', sessionError);
+      console.error('[POST /stop] Error creating session:', sessionError);
       return res.status(500).json({ error: 'Failed to save session', details: sessionError.message });
     }
 
-    console.log('[POST /api/timer/stop] Session created:', session.id);
+    console.log('[POST /stop] Session created:', session.id);
 
-    // Delete the active timer
+    // Delete active timer
     const { error: deleteError } = await req.supabase
       .from('active_timers')
       .delete()
       .eq('id', activeTimer.id);
 
     if (deleteError) {
-      console.error('[POST /api/timer/stop] Error deleting active timer:', deleteError);
+      console.error('[POST /stop] Error deleting active timer:', deleteError);
       // Session was saved, so don't fail the request
-      console.warn('[POST /api/timer/stop] Session saved but failed to clear active timer');
     } else {
-      console.log('[POST /api/timer/stop] Active timer cleared');
+      console.log('[POST /stop] Active timer deleted');
     }
 
     res.json({
@@ -352,11 +330,246 @@ router.post('/stop', async (req, res) => {
         endTime: session.actual_end_time,
         durationMinutes: session.duration_minutes,
         notes: session.notes
-      },
-      message: 'Timer stopped and session saved'
+      }
     });
   } catch (error) {
-    console.error('[POST /api/timer/stop] Server error:', error);
+    console.error('[POST /stop] Error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/timer/stop-stale-and-start
+ * Stop a stale timer with capped duration and start a new timer atomically
+ * Body: { oldTimerId, capOption: 'discard' | 'save_capped', newEventId, newTaskName, newIsUnplanned, clientActionId }
+ */
+router.post('/stop-stale-and-start', async (req, res) => {
+  try {
+    const { oldTimerId, capOption, newEventId, newTaskName, newIsUnplanned, clientActionId } = req.body;
+
+    console.log('[POST /stop-stale-and-start] Request:', {
+      user: req.user.id,
+      oldTimerId,
+      capOption,
+      newEventId,
+      newTaskName,
+      newIsUnplanned,
+      clientActionId
+    });
+
+    if (!oldTimerId || !capOption || !newTaskName || !clientActionId) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    if (capOption !== 'discard' && capOption !== 'save_capped') {
+      return res.status(400).json({ error: 'capOption must be "discard" or "save_capped"' });
+    }
+
+    // Get the old timer
+    const oldTimer = await getActiveTimerForUser(req.supabase, req.user.id);
+
+    if (!oldTimer) {
+      return res.status(404).json({ error: 'No active timer found' });
+    }
+
+    if (oldTimer.id !== oldTimerId) {
+      return res.status(400).json({ error: 'Timer ID mismatch' });
+    }
+
+    console.log('[POST /stop-stale-and-start] Old timer:', {
+      id: oldTimer.id,
+      task: oldTimer.task_name,
+      isStale: isStaleTimer(oldTimer.start_time)
+    });
+
+    // Handle old timer based on capOption
+    if (capOption === 'save_capped') {
+      const startTime = new Date(oldTimer.start_time);
+      const endTime = await calculateCappedEndTime(req.supabase, oldTimer);
+      const durationMinutes = Math.max(1, Math.round((endTime - startTime) / 60000));
+      const durationSeconds = Math.max(60, Math.round((endTime - startTime) / 1000));
+
+      console.log('[POST /stop-stale-and-start] Saving capped session:', {
+        duration: durationMinutes
+      });
+
+      // Create capped session
+      const { error: sessionError } = await req.supabase
+        .from('sessions')
+        .insert({
+          user_id: req.user.id,
+          event_id: oldTimer.event_id,
+          actual_start_time: oldTimer.start_time,
+          actual_end_time: endTime.toISOString(),
+          duration_minutes: durationMinutes,
+          duration_seconds: durationSeconds,
+          notes: 'Stale timer - capped duration'
+        });
+
+      if (sessionError) {
+        console.error('[POST /stop-stale-and-start] Error saving session:', sessionError);
+        return res.status(500).json({ error: 'Failed to save session' });
+      }
+
+      console.log('[POST /stop-stale-and-start] Capped session saved');
+    } else {
+      console.log('[POST /stop-stale-and-start] Discarding old timer without saving session');
+    }
+
+    // Delete old timer
+    await req.supabase
+      .from('active_timers')
+      .delete()
+      .eq('id', oldTimer.id);
+
+    console.log('[POST /stop-stale-and-start] Old timer deleted');
+
+    // Start new timer
+    const newStartTime = new Date().toISOString();
+    const { data: newTimer, error: newTimerError } = await req.supabase
+      .from('active_timers')
+      .insert({
+        user_id: req.user.id,
+        event_id: newEventId || null,
+        task_name: newTaskName,
+        is_unplanned: newIsUnplanned || false,
+        start_time: newStartTime,
+        last_heartbeat: newStartTime,
+        client_action_id: clientActionId
+      })
+      .select()
+      .single();
+
+    if (newTimerError) {
+      console.error('[POST /stop-stale-and-start] Error starting new timer:', newTimerError);
+      return res.status(500).json({ error: 'Failed to start new timer' });
+    }
+
+    console.log('[POST /stop-stale-and-start] New timer started:', newTimer.id);
+
+    res.json({
+      activeTimer: {
+        id: newTimer.id,
+        eventId: newTimer.event_id,
+        taskName: newTimer.task_name,
+        isUnplanned: newTimer.is_unplanned,
+        startTime: newTimer.start_time,
+        elapsedSeconds: 0
+      }
+    });
+  } catch (error) {
+    console.error('[POST /stop-stale-and-start] Error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/timer/stop-and-start
+ * Stop current timer and start a new one atomically
+ * Body: { oldTimerId, newEventId, newTaskName, newIsUnplanned, clientActionId }
+ */
+router.post('/stop-and-start', async (req, res) => {
+  try {
+    const { oldTimerId, newEventId, newTaskName, newIsUnplanned, clientActionId } = req.body;
+
+    console.log('[POST /stop-and-start] Request:', {
+      user: req.user.id,
+      oldTimerId,
+      newEventId,
+      newTaskName,
+      newIsUnplanned,
+      clientActionId
+    });
+
+    if (!oldTimerId || !newTaskName || !clientActionId) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Get the old timer
+    const oldTimer = await getActiveTimerForUser(req.supabase, req.user.id);
+
+    if (!oldTimer) {
+      return res.status(404).json({ error: 'No active timer found' });
+    }
+
+    if (oldTimer.id !== oldTimerId) {
+      return res.status(400).json({ error: 'Timer ID mismatch' });
+    }
+
+    // Stop old timer at current time
+    const startTime = new Date(oldTimer.start_time);
+    const endTime = new Date();
+    const durationMinutes = Math.max(1, Math.round((endTime - startTime) / 60000));
+    const durationSeconds = Math.max(60, Math.round((endTime - startTime) / 1000));
+
+    console.log('[POST /stop-and-start] Stopping old timer:', {
+      id: oldTimer.id,
+      duration: durationMinutes
+    });
+
+    // Create session for old timer
+    const { error: sessionError } = await req.supabase
+      .from('sessions')
+      .insert({
+        user_id: req.user.id,
+        event_id: oldTimer.event_id,
+        actual_start_time: oldTimer.start_time,
+        actual_end_time: endTime.toISOString(),
+        duration_minutes: durationMinutes,
+        duration_seconds: durationSeconds,
+        notes: null
+      });
+
+    if (sessionError) {
+      console.error('[POST /stop-and-start] Error creating session:', sessionError);
+      return res.status(500).json({ error: 'Failed to save session' });
+    }
+
+    console.log('[POST /stop-and-start] Old session saved');
+
+    // Delete old timer
+    await req.supabase
+      .from('active_timers')
+      .delete()
+      .eq('id', oldTimer.id);
+
+    console.log('[POST /stop-and-start] Old timer deleted');
+
+    // Start new timer
+    const newStartTime = new Date().toISOString();
+    const { data: newTimer, error: newTimerError } = await req.supabase
+      .from('active_timers')
+      .insert({
+        user_id: req.user.id,
+        event_id: newEventId || null,
+        task_name: newTaskName,
+        is_unplanned: newIsUnplanned || false,
+        start_time: newStartTime,
+        last_heartbeat: newStartTime,
+        client_action_id: clientActionId
+      })
+      .select()
+      .single();
+
+    if (newTimerError) {
+      console.error('[POST /stop-and-start] Error starting new timer:', newTimerError);
+      return res.status(500).json({ error: 'Failed to start new timer' });
+    }
+
+    console.log('[POST /stop-and-start] New timer started:', newTimer.id);
+
+    res.json({
+      activeTimer: {
+        id: newTimer.id,
+        eventId: newTimer.event_id,
+        taskName: newTimer.task_name,
+        isUnplanned: newTimer.is_unplanned,
+        startTime: newTimer.start_time,
+        elapsedSeconds: 0
+      }
+    });
+  } catch (error) {
+    console.error('[POST /stop-and-start] Error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -364,7 +577,6 @@ router.post('/stop', async (req, res) => {
 /**
  * POST /api/timer/heartbeat
  * Update last_heartbeat timestamp to indicate the timer is still active
- * Used for detecting abandoned timers
  */
 router.post('/heartbeat', async (req, res) => {
   try {
@@ -376,7 +588,7 @@ router.post('/heartbeat', async (req, res) => {
       .maybeSingle();
 
     if (error) {
-      console.error('[POST /api/timer/heartbeat] Error updating heartbeat:', error);
+      console.error('[POST /heartbeat] Error:', error);
       return res.status(500).json({ error: 'Failed to update heartbeat' });
     }
 
@@ -386,179 +598,8 @@ router.post('/heartbeat', async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    console.error('[POST /api/timer/heartbeat] Server error:', error);
+    console.error('[POST /heartbeat] Error:', error);
     res.status(500).json({ error: 'Server error' });
-  }
-});
-
-/**
- * POST /api/timer/stop-and-start
- * Stop an old timer and start a new one atomically
- * Body: { oldTimerId, newEventId, newTaskName, newIsUnplanned, stopTime? }
- */
-router.post('/stop-and-start', async (req, res) => {
-  try {
-    const { oldTimerId, newEventId, newTaskName, newIsUnplanned, stopTime } = req.body;
-
-    console.log('[STOP-AND-START] Request received:', {
-      user: req.user.id,
-      oldTimerId,
-      newEventId,
-      newTaskName,
-      newIsUnplanned,
-      stopTime
-    });
-
-    if (!oldTimerId || !newTaskName) {
-      console.log('[STOP-AND-START] Missing required fields');
-      return res.status(400).json({ error: 'oldTimerId and newTaskName are required' });
-    }
-
-    // Step 1: Get the old active timer
-    console.log('[STOP-AND-START] Step 1: Fetching old active timer');
-    const { timer: oldTimer, wasStale } = await getActiveTimer(req.supabase, req.user.id, false);
-
-    if (!oldTimer) {
-      console.log('[STOP-AND-START] No active timer found');
-      return res.status(404).json({ error: 'No active timer found' });
-    }
-
-    if (oldTimer.id !== oldTimerId) {
-      console.log('[STOP-AND-START] Timer ID mismatch:', { expected: oldTimerId, actual: oldTimer.id });
-      return res.status(400).json({ error: 'Timer ID mismatch. Please refresh and try again.' });
-    }
-
-    // Step 2: Calculate stop time for old timer
-    const startTime = new Date(oldTimer.start_time);
-    let endTime;
-
-    if (stopTime) {
-      // Use provided stop time
-      endTime = new Date(stopTime);
-      console.log('[STOP-AND-START] Using provided stop time:', endTime.toISOString());
-    } else if (isStaleTimer(oldTimer.start_time)) {
-      // Stale timer - try to get scheduled end time or cap at +4 hours
-      console.log('[STOP-AND-START] Old timer is stale, determining cap time');
-
-      if (oldTimer.event_id) {
-        // Try to get scheduled end_time from events table
-        console.log('[STOP-AND-START] Fetching scheduled end time for event:', oldTimer.event_id);
-        const { data: eventData, error: eventError } = await req.supabase
-          .from('events')
-          .select('end_time')
-          .eq('id', oldTimer.event_id)
-          .maybeSingle();
-
-        if (eventError) {
-          console.error('[STOP-AND-START] Error fetching event end time:', eventError);
-        }
-
-        if (eventData && eventData.end_time) {
-          const scheduledEndTime = new Date(eventData.end_time);
-          console.log('[STOP-AND-START] Using scheduled end time:', scheduledEndTime.toISOString());
-          endTime = scheduledEndTime;
-        } else {
-          // No scheduled end time, cap at +4 hours
-          endTime = new Date(startTime.getTime() + 4 * 60 * 60 * 1000);
-          console.log('[STOP-AND-START] No scheduled end time, capping at +4 hours:', endTime.toISOString());
-        }
-      } else {
-        // Unplanned task, cap at +4 hours
-        endTime = new Date(startTime.getTime() + 4 * 60 * 60 * 1000);
-        console.log('[STOP-AND-START] Unplanned task, capping at +4 hours:', endTime.toISOString());
-      }
-    } else {
-      // Timer from today, stop at current time
-      endTime = new Date();
-      console.log('[STOP-AND-START] Timer from today, stopping at current time:', endTime.toISOString());
-    }
-
-    const durationMinutes = Math.max(1, Math.round((endTime - startTime) / 60000));
-    const durationSeconds = Math.max(60, Math.round((endTime - startTime) / 1000));
-
-    console.log('[STOP-AND-START] Old timer duration:', {
-      startTime: startTime.toISOString(),
-      endTime: endTime.toISOString(),
-      durationMinutes,
-      durationSeconds
-    });
-
-    // Step 3: Create session for old timer
-    console.log('[STOP-AND-START] Step 3: Creating session for old timer');
-    const { data: session, error: sessionError } = await req.supabase
-      .from('sessions')
-      .insert({
-        user_id: req.user.id,
-        event_id: oldTimer.event_id,
-        actual_start_time: oldTimer.start_time,
-        actual_end_time: endTime.toISOString(),
-        duration_minutes: durationMinutes,
-        duration_seconds: durationSeconds,
-        notes: null
-      })
-      .select()
-      .single();
-
-    if (sessionError) {
-      console.error('[STOP-AND-START] Error creating session:', sessionError);
-      return res.status(500).json({ error: 'Failed to save session', details: sessionError.message });
-    }
-
-    console.log('[STOP-AND-START] Session created:', session.id);
-
-    // Step 4: Delete old active timer
-    console.log('[STOP-AND-START] Step 4: Deleting old active timer');
-    const { error: deleteError } = await req.supabase
-      .from('active_timers')
-      .delete()
-      .eq('id', oldTimer.id);
-
-    if (deleteError) {
-      console.error('[STOP-AND-START] Error deleting old timer:', deleteError);
-      // Continue anyway - session was saved
-    }
-
-    // Step 5: Create new active timer
-    console.log('[STOP-AND-START] Step 5: Creating new active timer');
-    const newStartTime = new Date().toISOString();
-    const { data: newTimer, error: newTimerError } = await req.supabase
-      .from('active_timers')
-      .insert({
-        user_id: req.user.id,
-        event_id: newEventId || null,
-        task_name: newTaskName,
-        is_unplanned: newIsUnplanned || false,
-        start_time: newStartTime,
-        last_heartbeat: newStartTime
-      })
-      .select()
-      .single();
-
-    if (newTimerError) {
-      console.error('[STOP-AND-START] Error creating new timer:', newTimerError);
-      return res.status(500).json({ error: 'Failed to start new timer', details: newTimerError.message });
-    }
-
-    console.log('[STOP-AND-START] New timer started:', newTimer.id);
-    console.log('[STOP-AND-START] SUCCESS: Stopped old timer and started new timer');
-
-    res.json({
-      activeTimer: {
-        id: newTimer.id,
-        eventId: newTimer.event_id,
-        taskName: newTimer.task_name,
-        isUnplanned: newTimer.is_unplanned,
-        startTime: newTimer.start_time,
-        elapsedSeconds: 0
-      },
-      oldSession: {
-        id: session.id,
-        durationMinutes: session.duration_minutes
-      }
-    });
-  } catch (error) {
-    console.error('[STOP-AND-START] Server error:', error);
-    res.status(500).json({ error: 'Server error', details: error.message });
   }
 });
 
