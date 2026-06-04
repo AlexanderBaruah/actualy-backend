@@ -415,9 +415,9 @@ const DEBUG_ENABLED = new URLSearchParams(window.location.search).get('debugTime
 
 // Debug logging for development (hidden by default)
 window.debugLog = function(msg) {
-  console.log('[DEBUG]', msg);
+  if (!DEBUG_ENABLED) return; // Skip all logging if debug not enabled
 
-  if (!DEBUG_ENABLED) return; // Skip UI logging if debug not enabled
+  console.log('[DEBUG]', msg);
 
   const panel = document.getElementById('debug-panel');
   if (panel) {
@@ -443,7 +443,7 @@ window.clearDebugPanel = function() {
 };
 
 // App version tracking
-const APP_VERSION = 'timer-server-v19';
+const APP_VERSION = 'timer-server-v20';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 console.log('[AUTH] Initializing auth...');
 
