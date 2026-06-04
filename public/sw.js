@@ -1,7 +1,7 @@
 // Service Worker for Actualy PWA
 // Network-first for HTML, cache-first for static assets
 
-const CACHE_NAME = 'actualy-v22';
+const CACHE_NAME = 'actualy-v23';
 const urlsToCache = [
   '/manifest.json',
   '/icon-180.png',

@@ -193,9 +193,19 @@ router.post('/start', async (req, res) => {
         elapsedHours: elapsedHours.toFixed(2)
       });
 
-      // If timer is stale, treat it as non-existent and allow new timer
+      // If timer is stale, DELETE it before creating new one
       if (isStale) {
-        console.log('[POST /start] Timer is STALE, treating as non-existent, allowing new timer');
+        console.log('[POST /start] Timer is STALE, deleting it before creating new timer');
+        const { error: deleteError } = await req.supabase
+          .from('active_timers')
+          .delete()
+          .eq('id', existing.id);
+
+        if (deleteError) {
+          console.error('[POST /start] Error deleting stale timer:', deleteError);
+          return res.status(500).json({ error: 'Failed to remove stale timer' });
+        }
+        console.log('[POST /start] Stale timer deleted, proceeding to create new timer');
         // Fall through to create new timer
       } else {
         // Non-stale timer exists - check if same or different event
