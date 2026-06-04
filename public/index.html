@@ -97,6 +97,10 @@
   .date-range-picker label { font-size: 13px; color: #666; margin-right: 6px; }
   .date-range-picker input { background: #111; border: 1px solid #2e2e2e; border-radius: 6px; color: #fff; padding: 6px 10px; font-size: 13px; font-family: inherit; color-scheme: dark; }
 
+  /* Offline banner */
+  .offline-banner { position: fixed; top: 0; left: 0; right: 0; background: #f59e0b; color: #000; padding: 10px 20px; text-align: center; font-size: 13px; font-weight: 500; z-index: 1000; display: none; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  .offline-banner.show { display: block; }
+
   /* Mobile responsiveness */
   @media (max-width: 640px) {
     body { -webkit-overflow-scrolling: touch; }
@@ -154,6 +158,11 @@
       Sign in with Google
     </button>
   </div>
+</div>
+
+<!-- Offline banner -->
+<div id="offline-banner" class="offline-banner">
+  📡 Offline — showing last saved data
 </div>
 
 <div id="app" style="display:none"></div>
@@ -311,7 +320,7 @@
 
 <script>
 // App version tracking
-const APP_VERSION = 'timer-local-stable-v1.2';
+const APP_VERSION = 'timer-local-stable-v1.3';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 
 // Initialize Supabase
@@ -357,6 +366,7 @@ const S = {
   selectedDays: new Set(), // Set of selected date keys for export
   dateRangeStart: '', // Start date for range picker
   dateRangeEnd: '', // End date for range picker
+  offline: false, // Track offline state
   // Planned tab state
   plannedSelectedDate: null, // Selected date in YYYY-MM-DD format
   plannedWeekStart: null, // First day of the displayed week
@@ -411,6 +421,29 @@ window.logout = async function() {
   await supabaseClient.auth.signOut();
 };
 
+// Show/hide offline banner
+function showOfflineBanner() {
+  if (!S.offline) {
+    S.offline = true;
+    document.getElementById('offline-banner').classList.add('show');
+    console.log('[OFFLINE] Network unavailable, showing cached data');
+  }
+}
+
+function hideOfflineBanner() {
+  if (S.offline) {
+    S.offline = false;
+    document.getElementById('offline-banner').classList.remove('show');
+    console.log('[ONLINE] Network restored');
+    // Silently refresh data when back online
+    if (S.tab === 'today' || S.tab === 'track') {
+      loadTodaysEvents().then(() => render()).catch(() => {});
+    } else if (S.tab === 'planned') {
+      loadPlannedEvents().catch(() => {});
+    }
+  }
+}
+
 async function apiCall(method, path, body = null) {
   if (!userToken) {
     console.error('No auth token available');
@@ -428,21 +461,36 @@ async function apiCall(method, path, body = null) {
 
   console.log(`API Call: ${method} ${path}`, body ? body : '');
 
-  const res = await fetch(`${API_BASE}${path}`, options);
-  if (!res.ok) {
-    const errorText = await res.text();
-    console.error(`API error ${res.status}:`, errorText);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, options);
 
-    // Try to parse error as JSON
-    try {
-      const errorJson = JSON.parse(errorText);
-      throw errorJson; // Throw the parsed error object
-    } catch (e) {
-      // If not JSON, throw a simple error object
-      throw { error: `API error: ${res.status}`, message: errorText };
+    // If request succeeds, hide offline banner
+    if (S.offline) {
+      hideOfflineBanner();
     }
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error(`API error ${res.status}:`, errorText);
+
+      // Try to parse error as JSON
+      try {
+        const errorJson = JSON.parse(errorText);
+        throw errorJson; // Throw the parsed error object
+      } catch (e) {
+        // If not JSON, throw a simple error object
+        throw { error: `API error: ${res.status}`, message: errorText };
+      }
+    }
+    return await res.json();
+  } catch (err) {
+    // Network error (fetch failed) - show offline banner but don't clear data
+    if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+      showOfflineBanner();
+      throw { error: 'Network unavailable', offline: true };
+    }
+    throw err;
   }
-  return await res.json();
 }
 
 async function loadTodaysEvents() {
@@ -469,7 +517,12 @@ async function loadTodaysEvents() {
     });
   } catch (err) {
     console.error('Failed to load events:', err);
-    EVS = [];
+    // DON'T clear EVS - keep last loaded data
+    // User will see offline banner and existing events
+    if (!err.offline) {
+      // Only clear on non-network errors (e.g. auth errors)
+      EVS = [];
+    }
   }
 }
 
@@ -1152,7 +1205,11 @@ async function loadPlannedEvents() {
     }
   } catch (error) {
     console.error('[Planned] Failed to load planned events:', error);
-    S.plannedEvents = [];
+    // DON'T clear plannedEvents - keep last loaded data
+    if (!error.offline) {
+      // Only clear on non-network errors
+      S.plannedEvents = [];
+    }
   }
 }
 
