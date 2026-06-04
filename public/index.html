@@ -443,7 +443,7 @@ window.clearDebugPanel = function() {
 };
 
 // App version tracking
-const APP_VERSION = 'timer-server-v23';
+const APP_VERSION = 'timer-server-v24';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 console.log('[AUTH] Initializing auth...');
 
@@ -525,9 +525,12 @@ async function apiCall(method, path, body = null) {
     // Try to parse error as JSON
     try {
       const errorJson = JSON.parse(errorText);
-      throw errorJson; // Throw the parsed error object
-    } catch (e) {
-      // If not JSON, throw a simple error object
+      // Add status code to the error object
+      errorJson.status = res.status;
+      throw errorJson; // Throw the parsed error object (includes activeTimer, conflict, etc.)
+    } catch (parseError) {
+      // If JSON parsing fails, throw a simple error object
+      if (parseError.status) throw parseError; // Re-throw if it's already our error object
       throw { error: `API error: ${res.status}`, message: errorText, status: res.status };
     }
   }
@@ -1412,18 +1415,49 @@ async function startTimer({ eventId, taskName, isUnplanned = false, createdEvent
     return { success: true, eventId: eventId };
 
   } catch (err) {
-    debugLog(`ERROR in startTimer: ${err.error || err.message || JSON.stringify(err)}`);
+    debugLog(`ERROR in startTimer: ${JSON.stringify(err)}`);
 
-    // Handle 409 conflict (race condition)
-    if (err.activeTimer || (err.error && err.error.includes('already active'))) {
-      debugLog('409 Conflict detected - timer already running');
-      renderActiveTimer(err.activeTimer);
-      render();
-      return {
-        success: true,
-        recovered: true,
-        message: `Timer "${err.activeTimer.taskName}" is already running`
-      };
+    // Handle 409 conflict from POST /api/timer/start
+    if (err.status === 409 && err.activeTimer) {
+      debugLog('409 Conflict detected from POST /start - checking flags');
+
+      // Same event recovery
+      if (err.sameEvent) {
+        debugLog('Same event already running - recovering it');
+        renderActiveTimer(err.activeTimer);
+        render();
+        return {
+          success: true,
+          recovered: true,
+          message: `Timer "${err.activeTimer.taskName}" is already running`
+        };
+      }
+
+      // Different event conflict - show modal
+      if (err.conflict) {
+        debugLog('Different event conflict - showing modal');
+
+        // Don't check server again - we just got this from server
+        S.timerConflict = {
+          oldTimer: err.activeTimer,
+          newEventId: eventId,
+          newTaskName: taskName,
+          newIsUnplanned: isUnplanned,
+          createdEventId: createdEventId
+        };
+
+        const elapsedText = formatElapsed(err.activeTimer.startTime);
+        const conflictMessage = `"${err.activeTimer.taskName}" is already running (started ${elapsedText}).<br><br>Do you want to stop it and start "${taskName}"?`;
+
+        document.getElementById('timer-conflict-message').innerHTML = conflictMessage;
+        document.getElementById('timer-conflict-modal').classList.add('open');
+
+        return {
+          success: false,
+          reason: 'conflict_shown',
+          message: 'Conflict modal displayed'
+        };
+      }
     }
 
     // If this was an unplanned task creation that failed, clean up the event
