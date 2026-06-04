@@ -361,7 +361,7 @@ const S = {
 };
 
 // App version tracking
-const APP_VERSION = 'timer-server-v15';
+const APP_VERSION = 'timer-server-v16';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 console.log('[AUTH] Initializing auth...');
 
@@ -1161,6 +1161,12 @@ async function loadPlannedEvents() {
 }
 
 window.tog = async id => {
+  console.log('[TIMER] tog() called for event:', id, {
+    currentActiveId: S.active?.id || null,
+    isStopping: S.active?.id === id,
+    isStarting: S.active?.id !== id
+  });
+
   // Prevent double-clicking from saving twice
   if (S.saving) return;
 
@@ -1288,11 +1294,44 @@ window.tog = async id => {
         render();
         alert(`Timer "${err.activeTimer.taskName}" is already running. Continuing...`);
       } else if (err.error && (err.error.includes('already active') || err.error.includes('409'))) {
-        // Generic 409 error without activeTimer data
-        alert('Timer already active. Stop it before starting another.');
-        // Try to recover state from server
-        await fetchAndSyncActiveTimer();
-        render();
+        // Generic 409 error without activeTimer data - check server first
+        console.log('[TIMER] Got 409 without activeTimer data, checking server...');
+        try {
+          const serverState = await apiCall('GET', '/api/timer/active');
+          if (serverState.activeTimer) {
+            // Server has a timer - recover it
+            console.log('[TIMER] Server confirmed active timer exists:', serverState.activeTimer);
+            S.active = {
+              id: serverState.activeTimer.eventId,
+              startMs: new Date(serverState.activeTimer.startTime).getTime()
+            };
+            S.elapsed = serverState.activeTimer.elapsedSeconds;
+            if (!S.sess[serverState.activeTimer.eventId]) {
+              S.sess[serverState.activeTimer.eventId] = {
+                secs: 0,
+                startMs: new Date(serverState.activeTimer.startTime).getTime()
+              };
+            }
+            localStorage.setItem('activeSession', JSON.stringify({
+              id: serverState.activeTimer.eventId,
+              startMs: new Date(serverState.activeTimer.startTime).getTime(),
+              firstStart: new Date(serverState.activeTimer.startTime).getTime()
+            }));
+            render();
+            alert(`Timer "${serverState.activeTimer.taskName}" is already running. Continuing...`);
+          } else {
+            // Server has NO timer - stale local state
+            console.log('[TIMER] 409 error but server has NO active timer - clearing stale state');
+            S.active = null;
+            S.elapsed = 0;
+            localStorage.removeItem('activeSession');
+            render();
+            alert('Stale timer state detected and cleared. Please try starting again.');
+          }
+        } catch (checkError) {
+          console.error('[TIMER] Failed to check server state:', checkError);
+          alert('Could not verify timer state. Please refresh the page.');
+        }
       } else {
         // Other errors
         alert(`Failed to start timer: ${err.error || err.message || 'Unknown error'}`);
@@ -1611,6 +1650,11 @@ window.startUnplannedTask = async function() {
 
     console.log('[TIMER] Unplanned task created, starting timer...');
     console.log(`[TIMER] Created unplanned task ${eventData.event.id}, starting timer...`);
+    console.log('[TIMER] About to start unplanned timer, current state:', {
+      activeId: S.active?.id || null,
+      eventId: eventData.event.id,
+      taskName: name
+    });
     console.log('[TIMER] Calling POST /api/timer/start for unplanned task...');
 
     // Start timer on server
@@ -1625,10 +1669,10 @@ window.startUnplannedTask = async function() {
         eventId: eventData.event.id,
         taskName: name
       });
-      console.log(`[TIMER] Server started timer for unplanned task:`, startData.timer);
+      console.log(`[TIMER] Server started timer for unplanned task:`, startData.activeTimer);
 
       // Get server start time
-      const serverStartTime = new Date(startData.timer.start_time).getTime();
+      const serverStartTime = new Date(startData.activeTimer.startTime).getTime();
 
       // Update local state (don't call tog())
       S.active = { id: eventData.event.id, startMs: serverStartTime };
@@ -1644,7 +1688,26 @@ window.startUnplannedTask = async function() {
       console.log(`[TIMER] Unplanned task timer started successfully`);
     } catch (timerError) {
       console.error('[TIMER] Failed to start timer for unplanned task:', timerError);
-      err.textContent = 'Task created but failed to start timer. Please try again.';
+
+      // Remove the broken event from EVS since timer failed
+      const index = EVS.findIndex(e => e.id === eventData.event.id);
+      if (index !== -1) {
+        console.log('[TIMER] Removing failed unplanned event from EVS');
+        EVS.splice(index, 1);
+      }
+
+      // Show detailed error
+      const errorMsg = timerError.error || timerError.message || 'Unknown error';
+      err.textContent = `Timer failed to start: ${errorMsg}. The task was not created.`;
+
+      // Try to delete the event from server to clean up
+      try {
+        await apiCall('DELETE', `/api/events/${eventData.event.id}`);
+        console.log('[TIMER] Cleaned up orphaned event from server');
+      } catch (deleteError) {
+        console.error('[TIMER] Failed to clean up orphaned event:', deleteError);
+      }
+
       return;
     }
 
