@@ -23,6 +23,104 @@ function isStaleTimer(startTime) {
 }
 
 /**
+ * Shared helper: Get active timer for user with consistent stale timer handling
+ * This ensures all endpoints agree on what "active" means
+ *
+ * @param {Object} supabase - Supabase client
+ * @param {String} userId - User ID
+ * @param {Boolean} autoResolveStale - If true, automatically resolve stale timers
+ * @returns {Object} { timer: activeTimer or null, wasStale: boolean, resolved: boolean }
+ */
+async function getActiveTimer(supabase, userId, autoResolveStale = false) {
+  console.log('[getActiveTimer] Fetching for user:', userId, 'autoResolve:', autoResolveStale);
+
+  const { data: timer, error } = await supabase
+    .from('active_timers')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[getActiveTimer] Error:', error);
+    throw error;
+  }
+
+  if (!timer) {
+    console.log('[getActiveTimer] No active timer found');
+    return { timer: null, wasStale: false, resolved: false };
+  }
+
+  // Check if stale
+  const isStale = isStaleTimer(timer.start_time);
+  console.log('[getActiveTimer] Timer found:', timer.id, 'isStale:', isStale);
+
+  if (isStale && autoResolveStale) {
+    // Auto-resolve stale timer
+    console.log('[getActiveTimer] Auto-resolving stale timer:', timer.id);
+
+    // Calculate stop time
+    const startTime = new Date(timer.start_time);
+    let endTime;
+
+    if (timer.event_id) {
+      // Try to get scheduled end_time
+      const { data: eventData } = await supabase
+        .from('events')
+        .select('end_time')
+        .eq('id', timer.event_id)
+        .maybeSingle();
+
+      if (eventData && eventData.end_time) {
+        endTime = new Date(eventData.end_time);
+        console.log('[getActiveTimer] Using scheduled end time:', endTime.toISOString());
+      } else {
+        // Cap at +4 hours
+        endTime = new Date(startTime.getTime() + 4 * 60 * 60 * 1000);
+        console.log('[getActiveTimer] Capping at +4 hours:', endTime.toISOString());
+      }
+    } else {
+      // Unplanned, cap at +4 hours
+      endTime = new Date(startTime.getTime() + 4 * 60 * 60 * 1000);
+      console.log('[getActiveTimer] Unplanned, capping at +4 hours:', endTime.toISOString());
+    }
+
+    const durationMinutes = Math.max(1, Math.round((endTime - startTime) / 60000));
+    const durationSeconds = Math.max(60, Math.round((endTime - startTime) / 1000));
+
+    // Create session
+    try {
+      await supabase
+        .from('sessions')
+        .insert({
+          user_id: userId,
+          event_id: timer.event_id,
+          actual_start_time: timer.start_time,
+          actual_end_time: endTime.toISOString(),
+          duration_minutes: durationMinutes,
+          duration_seconds: durationSeconds,
+          notes: 'Auto-resolved stale timer'
+        });
+
+      console.log('[getActiveTimer] Session created for stale timer');
+    } catch (sessionError) {
+      console.error('[getActiveTimer] Failed to create session:', sessionError);
+    }
+
+    // Delete active_timers row
+    await supabase
+      .from('active_timers')
+      .delete()
+      .eq('id', timer.id);
+
+    console.log('[getActiveTimer] Stale timer resolved and deleted');
+    return { timer: null, wasStale: true, resolved: true };
+  }
+
+  // Return active timer (not stale or not auto-resolving)
+  return { timer: timer, wasStale: isStale, resolved: false };
+}
+
+/**
  * GET /api/timer/active
  * Get the currently active timer for the authenticated user
  * Returns null if no timer is active
@@ -31,43 +129,34 @@ router.get('/active', async (req, res) => {
   try {
     console.log('[GET /api/timer/active] Fetching active timer for user:', req.user.id);
 
-    const { data, error } = await req.supabase
-      .from('active_timers')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .maybeSingle();
+    const { timer, wasStale, resolved } = await getActiveTimer(req.supabase, req.user.id, false);
 
-    if (error) {
-      console.error('[GET /api/timer/active] Error fetching active timer:', error);
-      return res.status(500).json({ error: 'Failed to fetch active timer', details: error.message });
-    }
-
-    if (!data) {
-      console.log('[GET /api/timer/active] No active timer found');
+    if (!timer) {
+      console.log('[GET /api/timer/active] No active timer found', wasStale ? '(was stale)' : '');
       return res.json({ activeTimer: null });
     }
 
-    // Calculate elapsed time from server timestamp
-    const startTime = new Date(data.start_time);
+    // Calculate elapsed time
+    const startTime = new Date(timer.start_time);
     const now = new Date();
     const elapsedSeconds = Math.floor((now - startTime) / 1000);
 
     console.log('[GET /api/timer/active] Active timer found:', {
-      id: data.id,
-      task: data.task_name,
+      id: timer.id,
+      task: timer.task_name,
       elapsed: elapsedSeconds,
-      isUnplanned: data.is_unplanned
+      isUnplanned: timer.is_unplanned
     });
 
     res.json({
       activeTimer: {
-        id: data.id,
-        eventId: data.event_id,
-        taskName: data.task_name,
-        isUnplanned: data.is_unplanned,
-        startTime: data.start_time,
+        id: timer.id,
+        eventId: timer.event_id,
+        taskName: timer.task_name,
+        isUnplanned: timer.is_unplanned,
+        startTime: timer.start_time,
         elapsedSeconds: elapsedSeconds,
-        lastHeartbeat: data.last_heartbeat
+        lastHeartbeat: timer.last_heartbeat
       }
     });
   } catch (error) {
@@ -96,30 +185,46 @@ router.post('/start', async (req, res) => {
       isUnplanned: isUnplanned || false
     });
 
-    // Check if there's already an active timer
-    const { data: existing, error: checkError } = await req.supabase
-      .from('active_timers')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .maybeSingle();
+    // Use shared helper with auto-resolve for stale timers
+    const { timer: existing, wasStale, resolved } = await getActiveTimer(req.supabase, req.user.id, true);
 
-    if (checkError) {
-      console.error('[POST /api/timer/start] Error checking for existing timer:', checkError);
-      return res.status(500).json({ error: 'Failed to check for existing timer', details: checkError.message });
-    }
-
-    if (existing) {
+    if (resolved) {
+      console.log('[POST /api/timer/start] Stale timer was auto-resolved, proceeding with start');
+      // Continue to create new timer below
+    } else if (existing) {
       console.log('[POST /api/timer/start] Timer already active:', existing.id);
 
-      // Calculate elapsed time and check if stale
+      // Same event - return existing timer (recovery)
+      if (existing.event_id === eventId) {
+        console.log('[POST /api/timer/start] Same event, returning existing timer');
+        const startTime = new Date(existing.start_time);
+        const now = new Date();
+        const elapsedHours = (now - startTime) / (1000 * 60 * 60);
+
+        return res.status(409).json({
+          error: 'Timer already active',
+          activeTimer: {
+            id: existing.id,
+            eventId: existing.event_id,
+            taskName: existing.task_name,
+            isUnplanned: existing.is_unplanned,
+            startTime: existing.start_time,
+            elapsedHours: elapsedHours,
+            isStale: wasStale
+          }
+        });
+      }
+
+      // Different event - return 409 for conflict resolution
       const startTime = new Date(existing.start_time);
       const now = new Date();
       const elapsedHours = (now - startTime) / (1000 * 60 * 60);
-      const isStale = isStaleTimer(existing.start_time);
 
-      console.log('[POST /api/timer/start] Existing timer details:', {
+      console.log('[POST /api/timer/start] Different event conflict:', {
+        existing: existing.event_id,
+        requested: eventId,
         elapsedHours: elapsedHours.toFixed(2),
-        isStale
+        isStale: wasStale
       });
 
       return res.status(409).json({
@@ -131,12 +236,12 @@ router.post('/start', async (req, res) => {
           isUnplanned: existing.is_unplanned,
           startTime: existing.start_time,
           elapsedHours: elapsedHours,
-          isStale: isStale
+          isStale: wasStale
         }
       });
     }
 
-    // Create new active timer
+    // No active timer or stale timer resolved - create new timer
     const startTime = new Date().toISOString();
     const { data, error } = await req.supabase
       .from('active_timers')
@@ -158,7 +263,6 @@ router.post('/start', async (req, res) => {
 
     console.log('[POST /api/timer/start] Timer started successfully:', data.id);
 
-    // Also save to localStorage as backup (frontend will handle this)
     res.status(201).json({
       activeTimer: {
         id: data.id,
@@ -186,17 +290,7 @@ router.post('/stop', async (req, res) => {
 
     console.log('[POST /api/timer/stop] Stopping timer for user:', req.user.id);
 
-    // Get the active timer
-    const { data: activeTimer, error: fetchError } = await req.supabase
-      .from('active_timers')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .maybeSingle();
-
-    if (fetchError) {
-      console.error('[POST /api/timer/stop] Error fetching active timer:', fetchError);
-      return res.status(500).json({ error: 'Failed to fetch active timer', details: fetchError.message });
-    }
+    const { timer: activeTimer, wasStale } = await getActiveTimer(req.supabase, req.user.id, false);
 
     if (!activeTimer) {
       console.log('[POST /api/timer/stop] No active timer found');
@@ -322,16 +416,7 @@ router.post('/stop-and-start', async (req, res) => {
 
     // Step 1: Get the old active timer
     console.log('[STOP-AND-START] Step 1: Fetching old active timer');
-    const { data: oldTimer, error: fetchError } = await req.supabase
-      .from('active_timers')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .maybeSingle();
-
-    if (fetchError) {
-      console.error('[STOP-AND-START] Error fetching active timer:', fetchError);
-      return res.status(500).json({ error: 'Failed to fetch active timer', details: fetchError.message });
-    }
+    const { timer: oldTimer, wasStale } = await getActiveTimer(req.supabase, req.user.id, false);
 
     if (!oldTimer) {
       console.log('[STOP-AND-START] No active timer found');

@@ -1,7 +1,7 @@
 // Service Worker for Actualy PWA
 // Simple cache-first strategy for fast loading
 
-const CACHE_NAME = 'actualy-v18';
+const CACHE_NAME = 'actualy-v19';
 const urlsToCache = [
   '/',
   '/index.html',

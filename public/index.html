@@ -145,8 +145,8 @@
 </head>
 <body>
 
-<!-- DEBUG PANEL FOR IPHONE (no console access) -->
-<div id="debug-panel" style="position:fixed;top:0;left:0;right:0;z-index:10000;background:#000;color:#0f0;font-size:10px;padding:5px;max-height:30vh;overflow-y:auto;font-family:monospace;display:none;border-bottom:2px solid #0f9d8b">
+<!-- DEBUG PANEL (hidden by default, enable with ?debugTimer=1 or localStorage.DEBUG_TIMER="true") -->
+<div id="debug-panel" style="display:none;position:fixed;top:0;left:0;right:0;z-index:10000;background:#000;color:#0f0;font-size:10px;padding:5px;max-height:30vh;overflow-y:auto;font-family:monospace;border-bottom:2px solid #0f9d8b">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;border-bottom:1px solid #0f9d8b;padding-bottom:2px">
     <strong style="color:#0f9d8b">DEBUG LOG</strong>
     <button onclick="clearDebugPanel()" style="background:#ef4444;border:none;color:#fff;padding:2px 6px;font-size:9px;cursor:pointer;border-radius:3px">Clear</button>
@@ -441,9 +441,16 @@ window.confirmStopAndStart = async function() {
   }
 };
 
-// Debug logging for iPhone (no console access)
+// Check if debug mode is enabled
+const DEBUG_ENABLED = new URLSearchParams(window.location.search).get('debugTimer') === '1' ||
+                      localStorage.getItem('DEBUG_TIMER') === 'true';
+
+// Debug logging for development (hidden by default)
 window.debugLog = function(msg) {
   console.log('[DEBUG]', msg);
+
+  if (!DEBUG_ENABLED) return; // Skip UI logging if debug not enabled
+
   const panel = document.getElementById('debug-panel');
   if (panel) {
     panel.style.display = 'block';
@@ -468,7 +475,7 @@ window.clearDebugPanel = function() {
 };
 
 // App version tracking
-const APP_VERSION = 'timer-server-v18';
+const APP_VERSION = 'timer-server-v19';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 console.log('[AUTH] Initializing auth...');
 
@@ -1498,16 +1505,43 @@ async function startTimerOnServer(eventId, taskName, isUnplanned) {
           };
         } else {
           debugLog(`Recovery FAILED: server has NO active timer despite 409`);
-          // Clear stale state
+          // Clear stale state and treat as no active timer
           S.active = null;
           S.elapsed = 0;
           localStorage.removeItem('activeSession');
           render();
-          return {
-            success: false,
-            reason: 'stale_state',
-            message: 'Stale timer state cleared. Please try again.'
-          };
+          // Auto-retry: This was a false 409, proceed with starting timer
+          debugLog('False 409 detected - auto-retrying timer start');
+          try {
+            const retryData = await apiCall('POST', '/api/timer/start', {
+              eventId: eventId,
+              taskName: taskName,
+              isUnplanned: isUnplanned || false
+            });
+            const timer = retryData.timer || retryData.activeTimer;
+            const serverStartMs = new Date(timer.startTime || timer.start_time).getTime();
+            S.active = { id: eventId, startMs: serverStartMs };
+            S.elapsed = 0;
+            if (!S.sess[eventId]) {
+              S.sess[eventId] = { secs: 0, startMs: serverStartMs };
+            }
+            localStorage.setItem('activeSession', JSON.stringify({
+              id: eventId,
+              startMs: serverStartMs,
+              firstStart: serverStartMs
+            }));
+            debugLog(`Retry successful: timer started for eventId=${eventId}`);
+            await fetchAndSyncActiveTimer();
+            render();
+            return { success: true, eventId: eventId };
+          } catch (retryErr) {
+            debugLog(`Retry FAILED: ${retryErr.error || retryErr.message}`);
+            return {
+              success: false,
+              reason: 'retry_failed',
+              message: 'Could not start timer after resolving conflict. Please refresh.'
+            };
+          }
         }
       } catch (checkError) {
         debugLog(`Recovery FAILED: ${checkError.error || checkError.message}`);
