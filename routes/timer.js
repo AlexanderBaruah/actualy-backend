@@ -76,6 +76,7 @@ async function calculateCappedEndTime(supabase, timer) {
 /**
  * GET /api/timer/active
  * Get the currently active timer for the authenticated user
+ * NOTE: Stale timers (>12h or different day) are FILTERED OUT and treated as non-existent
  */
 router.get('/active', async (req, res) => {
   try {
@@ -87,11 +88,22 @@ router.get('/active', async (req, res) => {
       return res.json({ activeTimer: null });
     }
 
+    // Check if timer is stale
+    const isStale = isStaleTimer(timer.start_time);
+
+    if (isStale) {
+      console.log('[GET /active] Timer is STALE, treating as non-existent:', {
+        id: timer.id,
+        task: timer.task_name,
+        start_time: timer.start_time
+      });
+      return res.json({ activeTimer: null });
+    }
+
     // Calculate elapsed time using server timestamp math
     const startTime = new Date(timer.start_time);
     const now = new Date();
     const elapsedSeconds = Math.floor((now - startTime) / 1000);
-    const isStale = isStaleTimer(timer.start_time);
 
     console.log('[GET /active] Active timer:', {
       id: timer.id,
@@ -181,13 +193,38 @@ router.post('/start', async (req, res) => {
         elapsedHours: elapsedHours.toFixed(2)
       });
 
-      // Same event - return existing timer (recovery)
-      if (existing.event_id === eventId) {
-        console.log('[POST /start] Same event - returning existing timer');
+      // If timer is stale, treat it as non-existent and allow new timer
+      if (isStale) {
+        console.log('[POST /start] Timer is STALE, treating as non-existent, allowing new timer');
+        // Fall through to create new timer
+      } else {
+        // Non-stale timer exists - check if same or different event
+
+        // Same event - return existing timer (recovery)
+        if (existing.event_id === eventId) {
+          console.log('[POST /start] Same event - returning existing timer');
+          const elapsedSeconds = Math.floor((Date.now() - new Date(existing.start_time)) / 1000);
+          return res.status(409).json({
+            error: 'Timer already active',
+            sameEvent: true,
+            activeTimer: {
+              id: existing.id,
+              eventId: existing.event_id,
+              taskName: existing.task_name,
+              isUnplanned: existing.is_unplanned,
+              startTime: existing.start_time,
+              elapsedSeconds: elapsedSeconds,
+              isStale: false
+            }
+          });
+        }
+
+        // Different event - return conflict for user decision
+        console.log('[POST /start] Different event - returning conflict');
         const elapsedSeconds = Math.floor((Date.now() - new Date(existing.start_time)) / 1000);
         return res.status(409).json({
           error: 'Timer already active',
-          sameEvent: true,
+          conflict: true,
           activeTimer: {
             id: existing.id,
             eventId: existing.event_id,
@@ -195,28 +232,11 @@ router.post('/start', async (req, res) => {
             isUnplanned: existing.is_unplanned,
             startTime: existing.start_time,
             elapsedSeconds: elapsedSeconds,
-            isStale: isStale
+            isStale: false,
+            elapsedHours: elapsedHours
           }
         });
       }
-
-      // Different event - return conflict for user decision
-      console.log('[POST /start] Different event - returning conflict');
-      const elapsedSeconds = Math.floor((Date.now() - new Date(existing.start_time)) / 1000);
-      return res.status(409).json({
-        error: 'Timer already active',
-        conflict: true,
-        activeTimer: {
-          id: existing.id,
-          eventId: existing.event_id,
-          taskName: existing.task_name,
-          isUnplanned: existing.is_unplanned,
-          startTime: existing.start_time,
-          elapsedSeconds: elapsedSeconds,
-          isStale: isStale,
-          elapsedHours: elapsedHours
-        }
-      });
     }
 
     // No active timer - create new one
