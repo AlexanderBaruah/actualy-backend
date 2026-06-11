@@ -1,7 +1,7 @@
 // Service Worker for Actualy PWA
 // Network-first for HTML, cache-first for static assets
 
-const CACHE_NAME = 'timer-local-stable-v1.3';
+const CACHE_NAME = 'timer-local-stable-v1.4';
 const urlsToCache = [
   '/manifest.json',
   '/icon-180.png',

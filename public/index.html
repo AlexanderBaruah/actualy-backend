@@ -320,7 +320,7 @@
 
 <script>
 // App version tracking
-const APP_VERSION = 'timer-local-stable-v1.3';
+const APP_VERSION = 'timer-local-stable-v1.4';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 
 // Initialize Supabase
@@ -437,7 +437,9 @@ function hideOfflineBanner() {
     console.log('[ONLINE] Network restored');
     // Silently refresh data when back online
     if (S.tab === 'today' || S.tab === 'track') {
-      loadTodaysEvents().then(() => render()).catch(() => {});
+      loadTodaysEvents().then(() => {
+        loadTodaysSessions().then(() => render()).catch(() => {});
+      }).catch(() => {});
     } else if (S.tab === 'planned') {
       loadPlannedEvents().catch(() => {});
     }
@@ -523,6 +525,64 @@ async function loadTodaysEvents() {
       // Only clear on non-network errors (e.g. auth errors)
       EVS = [];
     }
+  }
+}
+
+async function loadTodaysSessions() {
+  try {
+    const data = await apiCall('GET', '/api/sessions/today');
+    console.log(`Loaded ${data.sessions.length} completed sessions for today`);
+
+    // Group sessions by event_id and sum durations
+    const sessionsByEvent = {};
+    data.sessions.forEach(session => {
+      const eventId = session.event_id;
+      if (!sessionsByEvent[eventId]) {
+        sessionsByEvent[eventId] = {
+          totalSecs: 0,
+          firstStartMs: new Date(session.actual_start_time).getTime(),
+          latestSessionId: session.id,
+          notes: session.notes || null
+        };
+      }
+      sessionsByEvent[eventId].totalSecs += session.duration_seconds;
+      // Keep the earliest start time
+      const thisStartMs = new Date(session.actual_start_time).getTime();
+      if (thisStartMs < sessionsByEvent[eventId].firstStartMs) {
+        sessionsByEvent[eventId].firstStartMs = thisStartMs;
+      }
+      // Keep the latest session ID and notes
+      sessionsByEvent[eventId].latestSessionId = session.id;
+      if (session.notes) {
+        sessionsByEvent[eventId].notes = session.notes;
+      }
+    });
+
+    // Populate S.sess with aggregated session data
+    Object.keys(sessionsByEvent).forEach(eventId => {
+      // Skip if this is the currently active timer (preserve active state)
+      if (S.active?.id === eventId) return;
+
+      const sessionData = sessionsByEvent[eventId];
+
+      // Store session data in S.sess format
+      S.sess[eventId] = {
+        secs: sessionData.totalSecs,
+        startMs: sessionData.firstStartMs
+      };
+
+      // Store session ID for potential updates
+      S.sessionIds[eventId] = sessionData.latestSessionId;
+
+      // Store notes if present
+      if (sessionData.notes) {
+        S.notes[eventId] = sessionData.notes;
+      }
+    });
+  } catch (err) {
+    console.error('Failed to load sessions:', err);
+    // DON'T clear S.sess - keep existing tracked sessions
+    // User will see offline banner
   }
 }
 
@@ -2279,6 +2339,9 @@ initAuth().then(async () => {
   // Load today's events BEFORE recovering active session
   // so that EVS is populated when recovery looks for the event
   await loadTodaysEvents();
+  // Load today's completed sessions to populate S.sess
+  await loadTodaysSessions();
+  // Now recover active timer (if any)
   await recoverActiveSession();
   render();
   startAutoSave();
