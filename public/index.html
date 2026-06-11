@@ -320,7 +320,7 @@
 
 <script>
 // App version tracking
-const APP_VERSION = 'timer-local-stable-v1.4';
+const APP_VERSION = 'timer-local-stable-v1.5';
 console.log(`[APP VERSION] ${APP_VERSION}`);
 
 // Initialize Supabase
@@ -535,6 +535,8 @@ async function loadTodaysSessions() {
 
     // Group sessions by event_id and sum durations
     const sessionsByEvent = {};
+    const unplannedEventIds = new Set();
+
     data.sessions.forEach(session => {
       const eventId = session.event_id;
       if (!sessionsByEvent[eventId]) {
@@ -559,9 +561,10 @@ async function loadTodaysSessions() {
     });
 
     // Populate S.sess with aggregated session data
-    Object.keys(sessionsByEvent).forEach(eventId => {
+    // Also fetch event details for unplanned events not in EVS
+    for (const eventId of Object.keys(sessionsByEvent)) {
       // Skip if this is the currently active timer (preserve active state)
-      if (S.active?.id === eventId) return;
+      if (S.active?.id === eventId) continue;
 
       const sessionData = sessionsByEvent[eventId];
 
@@ -578,7 +581,48 @@ async function loadTodaysSessions() {
       if (sessionData.notes) {
         S.notes[eventId] = sessionData.notes;
       }
-    });
+
+      // If event not in EVS, it might be an unplanned event - fetch it
+      if (!EVS.find(e => e.id === eventId)) {
+        unplannedEventIds.add(eventId);
+      }
+    }
+
+    // Fetch unplanned event details for rendering
+    for (const eventId of unplannedEventIds) {
+      try {
+        const eventData = await apiCall('GET', `/api/events/${eventId}`);
+        if (eventData.event) {
+          const e = eventData.event;
+          const start = new Date(e.start_time);
+          const end = new Date(e.end_time);
+          let colorIdx = COLORS.findIndex(c => c.bdr === e.color);
+          if (colorIdx === -1) colorIdx = 1;
+
+          // Add unplanned event to EVS so it can be rendered
+          EVS.push({
+            id: e.id,
+            n: e.name,
+            sh: start.getHours(),
+            sm: start.getMinutes(),
+            eh: end.getHours(),
+            em: end.getMinutes(),
+            fill: COLORS[colorIdx].fill,
+            bdr: e.color,
+            bar: COLORS[colorIdx].bar,
+            synced: e.synced_from_calendar || false,
+            isUnplanned: e.is_unplanned || false
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to fetch unplanned event ${eventId}:`, err);
+      }
+    }
+
+    // Re-sort EVS if we added unplanned events
+    if (unplannedEventIds.size > 0) {
+      EVS.sort((a, b) => toM(a.sh, a.sm) - toM(b.sh, b.sm));
+    }
   } catch (err) {
     console.error('Failed to load sessions:', err);
     // DON'T clear S.sess - keep existing tracked sessions
